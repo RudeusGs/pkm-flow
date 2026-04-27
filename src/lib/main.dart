@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'core/routes/app_routes.dart';
 import 'features/home/presentation/screens/main_shell_screen.dart';
 import 'features/workspace/presentation/screens/page_detail_screen.dart';
-
+import 'features/categories/presentation/screens/category_content_screen.dart';
 void main() {
   runApp(const MyApp());
 }
@@ -27,6 +27,15 @@ class MyApp extends StatelessWidget {
             builder: (_) => PageDetailScreen(
               pageId: args['pageId'] as String,
               title: args['title'] as String,
+            ),
+          );
+        } else if (settings.name == AppRoutes.categoryContent) {
+          final args = settings.arguments as Map<String, dynamic>;
+
+          return MaterialPageRoute(
+            builder: (_) => CategoryContentScreen(
+              categoryId: args['categoryId'] as String,
+              categoryName: args['categoryName'] as String,
             ),
           );
         }
