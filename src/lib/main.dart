@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
-void main() {
-  runApp(const MyApp());
-}
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+import 'app/app.dart';
+import 'app/app_dependencies.dart';
+import 'app/app_scope.dart';
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Block Based PKM',
-    );
-  }
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final dependencies = AppDependencies.create();
+  runApp(
+    AppScope(
+      dependencies: dependencies,
+      child: const BlockBasedApp(),
+    ),
+  );
 }

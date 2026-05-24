@@ -1,20 +1,26 @@
 class AppConfig {
   const AppConfig._();
 
-  /// Android emulator gọi localhost máy thật bằng 10.0.2.2
-  /// Backend của bạn đang có http://localhost:5029 và https://localhost:7286.
-  ///
-  /// Khi chạy Android emulator:
-  /// --dart-define=API_BASE_URL=http://10.0.2.2:5029
-  ///
-  /// Khi chạy iOS simulator:
-  /// --dart-define=API_BASE_URL=http://localhost:5029
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:5029',
+    defaultValue: 'https://localhost:7286/api/v1',
   );
 
-  static const Duration connectTimeout = Duration(seconds: 20);
-  static const Duration receiveTimeout = Duration(seconds: 30);
-  static const Duration sendTimeout = Duration(seconds: 30);
+  static String get normalizedApiBaseUrl {
+    var base = apiBaseUrl.trim();
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    return '$base/';
+  }
+
+  static String get collaborationHubUrl {
+    var base = apiBaseUrl.trim();
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    base = base.replaceFirst(RegExp(r'/api/v\d+$', caseSensitive: false), '');
+    base = base.replaceFirst(RegExp(r'/api$', caseSensitive: false), '');
+    return '$base/hubs/collaboration';
+  }
 }

@@ -118,8 +118,10 @@ class Endpoints {
 
   // Notifications
   static const String notifications = '/api/v1/notifications';
-  static const String notificationUnreadCount = '/api/v1/notifications/unread-count';
-  static const String markAllNotificationsRead = '/api/v1/notifications/mark-all-read';
+  static const String notificationUnreadCount =
+      '/api/v1/notifications/unread-count';
+  static const String markAllNotificationsRead =
+      '/api/v1/notifications/mark-all-read';
 
   static String markNotificationRead(String notificationId) {
     return '/api/v1/notifications/$notificationId:read';

@@ -1,262 +1,160 @@
 import 'package:dio/dio.dart';
 
-import '../auth/auth_token_store.dart';
 import '../config/app_config.dart';
-import '../error/error_mapper.dart';
-import '../error/failure.dart';
-import 'api_result.dart';
-import 'auth_interceptor.dart';
-import 'failure_exception.dart';
+import '../storage/auth_token_store.dart';
+import '../utils/json_utils.dart';
+import 'api_failure.dart';
 
 class ApiClient {
-  ApiClient._(this._dio);
-
-  final Dio _dio;
-
-  factory ApiClient.create({
-    required AuthTokenStore tokenStore,
-    Future<void> Function()? onUnauthorized,
-  }) {
-    final dio = Dio(
+  ApiClient({required this.tokenStore}) {
+    _dio = Dio(
       BaseOptions(
-        baseUrl: AppConfig.apiBaseUrl,
-        connectTimeout: AppConfig.connectTimeout,
-        receiveTimeout: AppConfig.receiveTimeout,
-        sendTimeout: AppConfig.sendTimeout,
+        baseUrl: AppConfig.normalizedApiBaseUrl,
+        connectTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
         responseType: ResponseType.json,
-
-        /// Cho phép nhận cả 400/401/403/409/422 để tự parse ApiResult lỗi.
         validateStatus: (_) => true,
+        headers: const {'Content-Type': 'application/json'},
       ),
     );
 
-    dio.interceptors.add(
-      AuthInterceptor(
-        tokenStore: tokenStore,
-        onUnauthorized: onUnauthorized,
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          final token = await tokenStore.readAccessToken();
+          if (token != null && token.trim().isNotEmpty) {
+            final type = await tokenStore.readTokenType();
+            options.headers['Authorization'] = '$type $token';
+          }
+          handler.next(options);
+        },
+        onResponse: (response, handler) async {
+          if (response.statusCode == 401) {
+            await tokenStore.clear();
+          }
+          handler.next(response);
+        },
       ),
     );
-
-    dio.interceptors.add(
-      LogInterceptor(
-        requestBody: true,
-        responseBody: true,
-        requestHeader: false,
-        responseHeader: false,
-      ),
-    );
-
-    return ApiClient._(dio);
   }
 
-  Future<T> get<T>(
-    String path, {
-    Map<String, dynamic>? queryParameters,
-    required T Function(Object? json) fromJson,
-  }) async {
-    try {
-      final response = await _dio.get<Object?>(
-        path,
-        queryParameters: queryParameters,
-      );
+  final AuthTokenStore tokenStore;
+  late final Dio _dio;
 
-      return _handleResponse<T>(response, fromJson);
-    } on DioException catch (error) {
-      throw FailureException(ErrorMapper.fromDioException(error));
-    } catch (error) {
-      if (error is FailureException) rethrow;
-      throw FailureException(ErrorMapper.fromUnknown(error));
-    }
+  Future<T> get<T>(String path,
+      {Map<String, dynamic>? query, required T Function(Object? json) parser}) {
+    return request<T>('GET', path, query: query, parser: parser);
   }
 
-  Future<T> post<T>(
-    String path, {
-    Object? body,
-    Map<String, dynamic>? queryParameters,
-    required T Function(Object? json) fromJson,
-  }) async {
-    try {
-      final response = await _dio.post<Object?>(
-        path,
-        data: body,
-        queryParameters: queryParameters,
-      );
-
-      return _handleResponse<T>(response, fromJson);
-    } on DioException catch (error) {
-      throw FailureException(ErrorMapper.fromDioException(error));
-    } catch (error) {
-      if (error is FailureException) rethrow;
-      throw FailureException(ErrorMapper.fromUnknown(error));
-    }
+  Future<T> post<T>(String path,
+      {Object? data,
+      Map<String, dynamic>? query,
+      required T Function(Object? json) parser}) {
+    return request<T>('POST', path, data: data, query: query, parser: parser);
   }
 
-  Future<T> put<T>(
-    String path, {
-    Object? body,
-    Map<String, dynamic>? queryParameters,
-    required T Function(Object? json) fromJson,
-  }) async {
-    try {
-      final response = await _dio.put<Object?>(
-        path,
-        data: body,
-        queryParameters: queryParameters,
-      );
-
-      return _handleResponse<T>(response, fromJson);
-    } on DioException catch (error) {
-      throw FailureException(ErrorMapper.fromDioException(error));
-    } catch (error) {
-      if (error is FailureException) rethrow;
-      throw FailureException(ErrorMapper.fromUnknown(error));
-    }
+  Future<T> put<T>(String path,
+      {Object? data, required T Function(Object? json) parser}) {
+    return request<T>('PUT', path, data: data, parser: parser);
   }
 
-  Future<T> patch<T>(
-    String path, {
-    Object? body,
-    Map<String, dynamic>? queryParameters,
-    required T Function(Object? json) fromJson,
-  }) async {
-    try {
-      final response = await _dio.patch<Object?>(
-        path,
-        data: body,
-        queryParameters: queryParameters,
-      );
-
-      return _handleResponse<T>(response, fromJson);
-    } on DioException catch (error) {
-      throw FailureException(ErrorMapper.fromDioException(error));
-    } catch (error) {
-      if (error is FailureException) rethrow;
-      throw FailureException(ErrorMapper.fromUnknown(error));
-    }
+  Future<T> patch<T>(String path,
+      {Object? data,
+      Map<String, dynamic>? query,
+      required T Function(Object? json) parser}) {
+    return request<T>('PATCH', path, data: data, query: query, parser: parser);
   }
 
-  Future<T> delete<T>(
+  Future<T> delete<T>(String path,
+      {Map<String, dynamic>? query,
+      Map<String, dynamic>? headers,
+      required T Function(Object? json) parser}) {
+    return request<T>('DELETE', path,
+        query: query, headers: headers, parser: parser);
+  }
+
+  Future<T> request<T>(
+    String method,
     String path, {
-    Object? body,
-    Map<String, dynamic>? queryParameters,
+    Object? data,
+    Map<String, dynamic>? query,
     Map<String, dynamic>? headers,
-    required T Function(Object? json) fromJson,
+    required T Function(Object? json) parser,
   }) async {
     try {
-      final response = await _dio.delete<Object?>(
-        path,
-        data: body,
-        queryParameters: queryParameters,
-        options: Options(headers: headers),
+      final response = await _dio.request<Object?>(
+        _endpoint(path),
+        data: data,
+        queryParameters: _cleanQuery(query),
+        options: Options(method: method, headers: headers),
       );
 
-      return _handleResponse<T>(response, fromJson);
+      final status = response.statusCode ?? 0;
+      final body = normalizeJsonKeys(response.data);
+      if (status >= 400) {
+        throw ApiFailure(_extractMessage(body, 'Lỗi kết nối API.'),
+            statusCode: status);
+      }
+
+      final map = body is Map ? asMap(body) : <String, dynamic>{};
+      final isApiResult = map.containsKey('isSuccess') ||
+          map.containsKey('statusCode') ||
+          map.containsKey('traceId');
+      if (isApiResult) {
+        final ok = asBool(map['isSuccess']);
+        if (!ok) {
+          throw ApiFailure(
+            _extractMessage(map, 'Thao tác thất bại.'),
+            statusCode: asInt(map['statusCode'], status),
+            traceId: asString(map['traceId'], ''),
+          );
+        }
+        return parser(map['data']);
+      }
+
+      return parser(body);
     } on DioException catch (error) {
-      throw FailureException(ErrorMapper.fromDioException(error));
-    } catch (error) {
-      if (error is FailureException) rethrow;
-      throw FailureException(ErrorMapper.fromUnknown(error));
+      throw ApiFailure(error.message ?? 'Không kết nối được server.');
     }
   }
 
-  Future<void> deleteNoData(
-    String path, {
-    Object? body,
-    Map<String, dynamic>? queryParameters,
-    Map<String, dynamic>? headers,
-  }) async {
-    try {
-      final response = await _dio.delete<Object?>(
-        path,
-        data: body,
-        queryParameters: queryParameters,
-        options: Options(headers: headers),
-      );
-
-      _handleNoDataResponse(response);
-    } on DioException catch (error) {
-      throw FailureException(ErrorMapper.fromDioException(error));
-    } catch (error) {
-      if (error is FailureException) rethrow;
-      throw FailureException(ErrorMapper.fromUnknown(error));
+  String _endpoint(String path) {
+    var endpoint = path.trim();
+    if (endpoint.startsWith('/')) {
+      endpoint = endpoint.substring(1);
     }
+    return endpoint.replaceFirst(
+        RegExp(r'^api/v\d+/', caseSensitive: false), '');
   }
 
-  Future<void> postNoData(
-    String path, {
-    Object? body,
-    Map<String, dynamic>? queryParameters,
-  }) async {
-    try {
-      final response = await _dio.post<Object?>(
-        path,
-        data: body,
-        queryParameters: queryParameters,
-      );
-
-      _handleNoDataResponse(response);
-    } on DioException catch (error) {
-      throw FailureException(ErrorMapper.fromDioException(error));
-    } catch (error) {
-      if (error is FailureException) rethrow;
-      throw FailureException(ErrorMapper.fromUnknown(error));
+  Map<String, dynamic>? _cleanQuery(Map<String, dynamic>? query) {
+    if (query == null) {
+      return null;
     }
+    final cleaned = <String, dynamic>{};
+    query.forEach((key, value) {
+      if (value != null && value.toString().trim().isNotEmpty) {
+        cleaned[key] = value;
+      }
+    });
+    return cleaned;
   }
 
-  T _handleResponse<T>(
-    Response<Object?> response,
-    T Function(Object? json) fromJson,
-  ) {
-    final body = response.data;
-
-    if (body is! Map<String, dynamic>) {
-      throw FailureException(
-        Failure(
-          type: FailureType.unknown,
-          message: 'Response không đúng định dạng ApiResult.',
-          statusCode: response.statusCode,
-        ),
-      );
+  String _extractMessage(Object? body, String fallback) {
+    final map = asMap(body);
+    final direct = map['message'] ?? map['title'] ?? map['error'];
+    if (direct != null && direct.toString().trim().isNotEmpty) {
+      return direct.toString();
     }
 
-    final result = ApiResult<T>.fromJson(body, fromJson);
-
-    if (!result.isSuccess) {
-      final errorResult = ApiResult<Object?>.fromJson(body, (json) => json);
-      throw FailureException(ErrorMapper.fromApiResult(errorResult));
+    final error = asMap(map['error']);
+    final details = error['details'];
+    if (details is List && details.isNotEmpty) {
+      return details.map((item) => item.toString()).join('\n');
     }
 
-    if (result.data == null) {
-      throw FailureException(
-        Failure(
-          type: FailureType.unknown,
-          message: 'Response thành công nhưng data bị null.',
-          statusCode: response.statusCode,
-          traceId: result.traceId,
-        ),
-      );
-    }
-
-    return result.data as T;
-  }
-
-  void _handleNoDataResponse(Response<Object?> response) {
-    final body = response.data;
-
-    if (body is! Map<String, dynamic>) {
-      throw FailureException(
-        Failure(
-          type: FailureType.unknown,
-          message: 'Response không đúng định dạng ApiResult.',
-          statusCode: response.statusCode,
-        ),
-      );
-    }
-
-    final result = ApiResult<Object?>.fromJson(body, (json) => json);
-
-    if (!result.isSuccess) {
-      throw FailureException(ErrorMapper.fromApiResult(result));
-    }
+    final code = asString(error['code']);
+    return code.isEmpty ? fallback : code;
   }
 }

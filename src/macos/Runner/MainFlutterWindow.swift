@@ -13,3 +13,6 @@ class MainFlutterWindow: NSWindow {
     super.awakeFromNib()
   }
 }
+
+
+

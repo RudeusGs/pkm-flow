@@ -1,17 +1,53 @@
-# src
+# Block Based PKM Flutter
 
-A new Flutter project.
+Mobile Flutter client được port lại từ Vue client theo hướng feature-based clean architecture.
 
-## Getting Started
+## Kiến trúc
 
-This project is a starting point for a Flutter application.
+```txt
+lib/
+├── main.dart                         # chỉ boot app
+├── app/                              # dependency graph + root app
+├── core/
+│   ├── config/                       # env/base URL
+│   ├── network/                      # Dio API client
+│   ├── realtime/                     # SignalR service + event envelope
+│   ├── storage/                      # secure token store
+│   ├── theme/                        # Notion-like mobile theme
+│   └── utils/
+├── features/
+│   ├── auth/                         # domain/data/presentation
+│   ├── workspaces/
+│   ├── pages/                        # page + block editor mobile
+│   ├── tasks/
+│   ├── inbox/                        # notifications + messages
+│   ├── social/
+│   └── home/
+└── shared/widgets/
+```
 
-A few resources to get you started if this is your first Flutter project:
+## Realtime
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Realtime nằm trong `lib/core/realtime/realtime_service.dart`, dùng SignalR hub:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```txt
+/hubs/collaboration
+```
+
+Các feature tự subscribe event cần thiết:
+
+- Pages: `PageCreated`, `PageUpdated`, `PageDeleted`, `BlockCreated`, `BlockUpdated`, `BlockDeleted`, `BlockDraftChanged`, `PagePresenceChanged`
+- Tasks: `TaskCreated`, `TaskUpdated`, `TaskDeleted`, `TaskStatusChanged`, `RecommendationCreated`
+- Inbox: `NotificationCreated`, `ConversationUpserted`, `MessageCreated`, `ConversationTyping`
+- Social: `FriendRequestReceived`, `FriendRequestAccepted`, `FriendshipChanged`, `FriendRemoved`
+
+Desktop-only đã bỏ: cursor chuột, pointer vị trí chuột, layout nhiều panel.
+
+## Chạy project
+
+```bash
+flutter pub get
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:5029/api/v1
+```
+
+Real device cần đổi `10.0.2.2` thành LAN IP của máy chạy backend.
