@@ -60,6 +60,25 @@ class InboxRepository {
     );
   }
 
+  Future<MessageItem> sendWorkspaceShare(
+    String conversationId, {
+    required String workspaceId,
+    String role = 'viewer',
+  }) {
+    return _apiClient.post<MessageItem>(
+      'conversations/$conversationId/messages/workspace-share',
+      data: {'workspaceId': workspaceId, 'role': role},
+      parser: (json) => MessageItem.fromJson(asMap(json)),
+    );
+  }
+
+  Future<void> acceptWorkspaceShare(String messageId) {
+    return _apiClient.post<void>(
+      'conversations/messages/$messageId/workspace-share/accept',
+      parser: (_) {},
+    );
+  }
+
   Future<Conversation> createConversation(String recipientUserId) {
     return _apiClient.post<Conversation>(
       'conversations/direct',

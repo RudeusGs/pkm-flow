@@ -59,9 +59,12 @@ class AuthController extends ChangeNotifier {
     });
   }
 
-  Future<bool> updateProfile(String fullName) async {
+  Future<bool> updateProfile(String fullName, {String? avatarUrl}) async {
     return _run(() async {
-      user = await _repository.updateProfile(fullName: fullName);
+      user = await _repository.updateProfile(
+        fullName: fullName,
+        avatarUrl: avatarUrl,
+      );
     });
   }
 

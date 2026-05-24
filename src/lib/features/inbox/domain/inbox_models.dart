@@ -57,16 +57,21 @@ class Conversation {
 }
 
 class MessageItem {
-  const MessageItem(
-      {required this.id,
-      required this.conversationId,
-      required this.body,
-      this.isMine = false,
-      this.createdDate});
+  const MessageItem({
+    required this.id,
+    required this.conversationId,
+    required this.body,
+    this.type = 'text',
+    this.imageUrl,
+    this.isMine = false,
+    this.createdDate,
+  });
 
   final String id;
   final String conversationId;
   final String body;
+  final String type;
+  final String? imageUrl;
   final bool isMine;
   final String? createdDate;
 
@@ -74,6 +79,8 @@ class MessageItem {
         id: asString(json['id']),
         conversationId: asString(json['conversationId']),
         body: asString(json['body'], asString(json['textContent'])),
+        type: asString(json['type'], 'text'),
+        imageUrl: json['imageUrl']?.toString(),
         isMine: asBool(json['isMine']),
         createdDate: json['createdDate']?.toString(),
       );

@@ -74,6 +74,25 @@ class InboxController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> sendWorkspaceShare(String workspaceId,
+      {String role = 'viewer'}) async {
+    final conversation = selectedConversation;
+    if (conversation == null || workspaceId.trim().isEmpty) {
+      return;
+    }
+    final sent = await _repository.sendWorkspaceShare(
+      conversation.id,
+      workspaceId: workspaceId,
+      role: role,
+    );
+    messages = [...messages, sent];
+    notifyListeners();
+  }
+
+  Future<void> acceptWorkspaceShare(MessageItem message) async {
+    await _repository.acceptWorkspaceShare(message.id);
+  }
+
   Future<void> markNotificationRead(NotificationItem notification) async {
     await _repository.markNotificationRead(notification.id);
     notifications = notifications

@@ -46,11 +46,16 @@ class AuthRepository {
 
   Future<AuthUser> updateProfile(
       {required String fullName, String? avatarUrl}) {
-    return _apiClient.patch<AuthUser>(
+    return _apiClient
+        .patch<AuthUser>(
       'me/profile',
       data: {'fullName': fullName, 'avatarUrl': avatarUrl},
       parser: (json) => AuthUser.fromJson(asMap(json)),
-    );
+    )
+        .then((user) async {
+      await _tokenStore.saveUser(user);
+      return user;
+    });
   }
 
   Future<void> logout() async {

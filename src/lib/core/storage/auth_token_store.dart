@@ -23,8 +23,11 @@ class AuthTokenStore {
     await _storage.write(
         key: _tokenType,
         value: token.tokenType.isEmpty ? 'Bearer' : token.tokenType);
-    await _storage.write(
-        key: _userJson, value: jsonEncode(token.user.toJson()));
+    await saveUser(token.user);
+  }
+
+  Future<void> saveUser(AuthUser user) async {
+    await _storage.write(key: _userJson, value: jsonEncode(user.toJson()));
   }
 
   Future<String?> readAccessToken() => _storage.read(key: _accessToken);
