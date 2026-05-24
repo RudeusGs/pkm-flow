@@ -29,8 +29,7 @@ class BlockItem {
         orderKey: asString(json['orderKey']),
       );
 
-  BlockItem copyWith({String? type, String? textContent, String? propsJson}) =>
-      BlockItem(
+  BlockItem copyWith({String? type, String? textContent, String? propsJson}) => BlockItem(
         id: id,
         pageId: pageId,
         type: type ?? this.type,
@@ -42,10 +41,7 @@ class BlockItem {
 }
 
 class PageDocument {
-  const PageDocument(
-      {required this.pageId,
-      required this.currentRevision,
-      required this.blocks});
+  const PageDocument({required this.pageId, required this.currentRevision, required this.blocks});
 
   final String pageId;
   final int currentRevision;
@@ -59,11 +55,7 @@ class PageDocument {
 }
 
 class BlockMutation {
-  const BlockMutation(
-      {required this.pageId,
-      this.blockId,
-      required this.appliedRevision,
-      this.block});
+  const BlockMutation({required this.pageId, this.blockId, required this.appliedRevision, this.block});
 
   final String pageId;
   final String? blockId;
@@ -74,43 +66,6 @@ class BlockMutation {
         pageId: asString(json['pageId']),
         blockId: json['blockId']?.toString(),
         appliedRevision: asInt(json['appliedRevision']),
-        block: json['block'] == null
-            ? null
-            : BlockItem.fromJson(asMap(json['block'])),
-      );
-}
-
-class BlockLease {
-  const BlockLease({
-    required this.blockId,
-    required this.pageId,
-    required this.granted,
-    required this.status,
-    this.holderUserId,
-    this.holderDisplayName,
-    this.expiresAtUtc,
-    this.isHeldByCurrentUser = false,
-  });
-
-  final String blockId;
-  final String pageId;
-  final bool granted;
-  final String status;
-  final String? holderUserId;
-  final String? holderDisplayName;
-  final String? expiresAtUtc;
-  final bool isHeldByCurrentUser;
-
-  bool get canEdit => granted && isHeldByCurrentUser;
-
-  factory BlockLease.fromJson(JsonMap json) => BlockLease(
-        blockId: asString(json['blockId']),
-        pageId: asString(json['pageId']),
-        granted: asBool(json['granted']),
-        status: asString(json['status']),
-        holderUserId: json['holderUserId']?.toString(),
-        holderDisplayName: json['holderDisplayName']?.toString(),
-        expiresAtUtc: json['expiresAtUtc']?.toString(),
-        isHeldByCurrentUser: asBool(json['isHeldByCurrentUser']),
+        block: json['block'] == null ? null : BlockItem.fromJson(asMap(json['block'])),
       );
 }

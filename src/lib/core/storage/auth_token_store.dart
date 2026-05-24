@@ -20,10 +20,8 @@ class AuthTokenStore {
   Future<void> save(AuthToken token) async {
     await _storage.write(key: _accessToken, value: token.accessToken);
     await _storage.write(key: _refreshToken, value: token.refreshToken);
-    await _storage.write(
-        key: _tokenType,
-        value: token.tokenType.isEmpty ? 'Bearer' : token.tokenType);
-    await saveUser(token.user);
+    await _storage.write(key: _tokenType, value: token.tokenType.isEmpty ? 'Bearer' : token.tokenType);
+    await _storage.write(key: _userJson, value: jsonEncode(token.user.toJson()));
   }
 
   Future<void> saveUser(AuthUser user) async {
@@ -32,8 +30,7 @@ class AuthTokenStore {
 
   Future<String?> readAccessToken() => _storage.read(key: _accessToken);
   Future<String?> readRefreshToken() => _storage.read(key: _refreshToken);
-  Future<String> readTokenType() async =>
-      await _storage.read(key: _tokenType) ?? 'Bearer';
+  Future<String> readTokenType() async => await _storage.read(key: _tokenType) ?? 'Bearer';
 
   Future<AuthUser?> readUser() async {
     final raw = await _storage.read(key: _userJson);

@@ -15,20 +15,11 @@ class RealtimeStatusChip extends StatelessWidget {
       builder: (context, _) {
         final connected = realtime.isConnected;
         final connecting = realtime.isConnecting;
-        final label = connected
-            ? 'Realtime'
-            : connecting
-                ? 'Đang nối'
-                : 'Offline';
-        final icon = connected
-            ? Icons.bolt
-            : connecting
-                ? Icons.sync
-                : Icons.cloud_off_outlined;
+        final label = connected ? 'Realtime' : connecting ? 'Đang nối' : 'Offline';
+        final icon = connected ? Icons.bolt : connecting ? Icons.sync : Icons.cloud_off_outlined;
         return Chip(
           visualDensity: VisualDensity.compact,
-          avatar: Icon(icon,
-              size: 16, color: connected ? AppColors.accent : AppColors.muted),
+          avatar: Icon(icon, size: 16, color: connected ? AppColors.accent : AppColors.muted),
           label: Text(label),
         );
       },

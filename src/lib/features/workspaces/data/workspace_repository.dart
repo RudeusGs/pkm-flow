@@ -3,8 +3,7 @@ import '../../../core/utils/json_utils.dart';
 import '../domain/workspace.dart';
 
 class WorkspaceRepository {
-  const WorkspaceRepository({required ApiClient apiClient})
-      : _apiClient = apiClient;
+  const WorkspaceRepository({required ApiClient apiClient}) : _apiClient = apiClient;
 
   final ApiClient _apiClient;
 
@@ -16,43 +15,51 @@ class WorkspaceRepository {
     );
   }
 
-  Future<Workspace> createWorkspace(
-      {required String name,
-      String? description,
-      String visibility = 'private'}) {
+  Future<Workspace> createWorkspace({
+    required String name,
+    String? description,
+    String visibility = 'private',
+  }) {
     return _apiClient.post<Workspace>(
       'workspaces',
       data: {
         'name': name,
         'description': description,
-        'visibility': visibility
+        'visibility': visibility,
       },
       parser: (json) => Workspace.fromJson(asMap(json)),
     );
   }
 
-  Future<Workspace> updateWorkspace(Workspace workspace,
-      {required String name,
-      String? description,
-      String visibility = 'private'}) {
+  Future<Workspace> updateWorkspace(
+    Workspace workspace, {
+    required String name,
+    String? description,
+    String? visibility,
+  }) {
     return _apiClient.put<Workspace>(
       'workspaces/${workspace.id}',
       data: {
         'name': name,
         'description': description,
-        'visibility': visibility
+        'visibility': visibility ?? workspace.visibility,
       },
       parser: (json) => Workspace.fromJson(asMap(json)),
     );
   }
 
   Future<void> deleteWorkspace(String workspaceId) {
-    return _apiClient.delete<void>('workspaces/$workspaceId', parser: (_) {});
+    return _apiClient.delete<void>(
+      'workspaces/$workspaceId',
+      parser: (_) {},
+    );
   }
 
   Future<void> leaveWorkspace(String workspaceId) {
-    return _apiClient.post<void>('workspaces/$workspaceId/leave',
-        parser: (_) {});
+    return _apiClient.post<void>(
+      'workspaces/$workspaceId/leave',
+      parser: (_) {},
+    );
   }
 
   Future<List<WorkspaceMember>> members(String workspaceId) {
@@ -62,8 +69,11 @@ class WorkspaceRepository {
     );
   }
 
-  Future<void> inviteMember(String workspaceId,
-      {required String email, required String role}) {
+  Future<void> inviteByEmail(
+    String workspaceId, {
+    required String email,
+    String role = 'member',
+  }) {
     return _apiClient.post<void>(
       'workspaces/$workspaceId/members',
       data: {'email': email, 'role': role},
@@ -71,8 +81,20 @@ class WorkspaceRepository {
     );
   }
 
+  // Alias để tương thích với controller/file cũ.
+  Future<void> inviteMember(
+    String workspaceId, {
+    required String email,
+    String role = 'member',
+  }) {
+    return inviteByEmail(workspaceId, email: email, role: role);
+  }
+
   Future<WorkspaceMember> changeMemberRole(
-      String workspaceId, String userId, String role) {
+    String workspaceId,
+    String userId,
+    String role,
+  ) {
     return _apiClient.patch<WorkspaceMember>(
       'workspaces/$workspaceId/members/$userId/role',
       data: {'role': role},
@@ -81,7 +103,9 @@ class WorkspaceRepository {
   }
 
   Future<void> removeMember(String workspaceId, String userId) {
-    return _apiClient.delete<void>('workspaces/$workspaceId/members/$userId',
-        parser: (_) {});
+    return _apiClient.delete<void>(
+      'workspaces/$workspaceId/members/$userId',
+      parser: (_) {},
+    );
   }
 }

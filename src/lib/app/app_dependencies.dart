@@ -40,8 +40,7 @@ class AppDependencies {
       tokenStore: tokenStore,
       apiClient: apiClient,
       realtime: realtime,
-      authRepository:
-          AuthRepository(apiClient: apiClient, tokenStore: tokenStore),
+      authRepository: AuthRepository(apiClient: apiClient, tokenStore: tokenStore),
       workspaceRepository: WorkspaceRepository(apiClient: apiClient),
       pageRepository: PageRepository(apiClient: apiClient),
       taskRepository: TaskRepository(apiClient: apiClient),

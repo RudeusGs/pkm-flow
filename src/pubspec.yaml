@@ -13,6 +13,7 @@ dependencies:
   dio: ^5.9.2
   flutter_secure_storage: ^9.2.4
   signalr_netcore: ^1.4.4
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:

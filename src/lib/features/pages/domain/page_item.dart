@@ -32,8 +32,7 @@ class PageItem {
         currentRevision: asInt(json['currentRevision']),
       );
 
-  PageItem copyWith({String? title, String? icon, int? currentRevision}) =>
-      PageItem(
+  PageItem copyWith({String? title, String? icon, int? currentRevision}) => PageItem(
         id: id,
         workspaceId: workspaceId,
         title: title ?? this.title,

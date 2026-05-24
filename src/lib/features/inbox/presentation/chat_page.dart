@@ -1,16 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/json_utils.dart';
+import '../../../core/utils/image_url.dart';
+import '../../../shared/widgets/app_avatar.dart';
 import '../../workspaces/domain/workspace.dart';
 import '../domain/inbox_models.dart';
 import 'inbox_controller.dart';
 
 class ChatPage extends StatefulWidget {
-  const ChatPage({
-    super.key,
-    required this.controller,
-    this.workspaces = const <Workspace>[],
-  });
+  const ChatPage(
+      {super.key, required this.controller, this.workspaces = const []});
 
   final InboxController controller;
   final List<Workspace> workspaces;
@@ -21,107 +23,148 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final _text = TextEditingController();
+  final _scroll = ScrollController();
+  Timer? _typingTimer;
+  bool _typingActive = false;
+  bool _sending = false;
 
   @override
   void dispose() {
+    _typingTimer?.cancel();
     _text.dispose();
+    _scroll.dispose();
     super.dispose();
+  }
+
+  Future<void> _send() async {
+    if (_sending || _text.text.trim().isEmpty) return;
+    final text = _text.text;
+    setState(() => _sending = true);
+    _text.clear();
+    try {
+      await widget.controller.sendText(text);
+      await widget.controller.publishTyping(false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients)
+          _scroll.animateTo(_scroll.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut);
+      });
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  void _handleTyping(String value) {
+    if (!_typingActive) {
+      _typingActive = true;
+      unawaited(widget.controller.publishTyping(true));
+    }
+    _typingTimer?.cancel();
+    _typingTimer = Timer(const Duration(milliseconds: 1200), () {
+      _typingActive = false;
+      unawaited(widget.controller.publishTyping(false));
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final conversation = widget.controller.selectedConversation;
     return AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) {
+        final conversation = widget.controller.selectedConversation;
         return Scaffold(
           appBar: AppBar(
-            title: Text(conversation?.otherFullName ?? 'Chat'),
-            actions: [
-              if (widget.workspaces.isNotEmpty)
-                IconButton(
-                  tooltip: 'Chia sẻ workspace',
-                  onPressed: () => _shareWorkspace(context),
-                  icon: const Icon(Icons.ios_share),
-                ),
-            ],
+            titleSpacing: 0,
+            title: conversation == null
+                ? const Text('Chat')
+                : Row(
+                    children: [
+                      AppAvatar(
+                          name: conversation.otherFullName,
+                          imageUrl: conversation.otherAvatarUrl,
+                          radius: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(conversation.otherFullName,
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                            Text('@${conversation.otherUserName}',
+                                style: const TextStyle(
+                                    fontSize: 12, color: AppColors.muted)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
           ),
           body: Column(
             children: [
               Expanded(
                 child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  controller: _scroll,
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
                   itemCount: widget.controller.messages.length,
                   itemBuilder: (context, index) {
                     final message = widget.controller.messages[index];
-                    return Align(
-                      alignment: message.isMine
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
-                        constraints: BoxConstraints(
-                            maxWidth: MediaQuery.sizeOf(context).width * .75),
-                        decoration: BoxDecoration(
-                          color: message.isMine
-                              ? AppColors.accent
-                              : AppColors.surface,
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: AppColors.line),
-                        ),
-                        child: _MessageBubbleContent(
-                          message: message,
-                          onAcceptWorkspace: message.isMine
-                              ? null
-                              : () async {
-                                  await widget.controller
-                                      .acceptWorkspaceShare(message);
-                                  if (!context.mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                        content:
-                                            Text('Đã tham gia workspace.')),
-                                  );
-                                },
-                        ),
-                      ),
+                    return _MessageBubble(
+                      message: message,
+                      onAcceptWorkspaceShare: message.isMine ||
+                              !message.isWorkspaceShare
+                          ? null
+                          : () async {
+                              final workspace = await widget.controller
+                                  .acceptWorkspaceShare(message);
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                      content:
+                                          Text('Opened "${workspace.name}".')));
+                            },
                     );
                   },
                 ),
               ),
               if (widget.controller.typingText != null)
                 Padding(
-                    padding: const EdgeInsets.only(left: 18, bottom: 6),
-                    child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(widget.controller.typingText!,
-                            style: const TextStyle(color: AppColors.muted)))),
+                  padding: const EdgeInsets.only(left: 18, bottom: 6),
+                  child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(widget.controller.typingText!,
+                          style: const TextStyle(color: AppColors.muted))),
+                ),
               SafeArea(
                 top: false,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  decoration: const BoxDecoration(
+                    color: AppColors.surface,
+                    border: Border(top: BorderSide(color: AppColors.line)),
+                  ),
                   child: Row(
                     children: [
                       Expanded(
                         child: TextField(
                           controller: _text,
-                          decoration:
-                              const InputDecoration(hintText: 'Nhắn gì đó...'),
-                          onChanged: (_) =>
-                              widget.controller.publishTyping(true),
+                          minLines: 1,
+                          maxLines: 5,
+                          decoration: const InputDecoration(
+                              hintText: 'Message...', filled: true),
+                          onChanged: _handleTyping,
+                          onSubmitted: (_) => _send(),
                         ),
                       ),
                       const SizedBox(width: 8),
                       IconButton.filled(
-                        onPressed: () async {
-                          final text = _text.text;
-                          _text.clear();
-                          await widget.controller.sendText(text);
-                          await widget.controller.publishTyping(false);
-                        },
-                        icon: const Icon(Icons.send),
+                        onPressed: _sending ? null : _send,
+                        icon: _sending
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.send_rounded),
                       ),
                     ],
                   ),
@@ -133,119 +176,145 @@ class _ChatPageState extends State<ChatPage> {
       },
     );
   }
-
-  Future<void> _shareWorkspace(BuildContext context) async {
-    final result = await _showWorkspaceShareDialog(context, widget.workspaces);
-    if (result == null) {
-      return;
-    }
-    await widget.controller
-        .sendWorkspaceShare(result.workspaceId, role: result.role);
-  }
 }
 
-class _MessageBubbleContent extends StatelessWidget {
-  const _MessageBubbleContent({required this.message, this.onAcceptWorkspace});
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({required this.message, this.onAcceptWorkspaceShare});
 
   final MessageItem message;
-  final Future<void> Function()? onAcceptWorkspace;
+  final VoidCallback? onAcceptWorkspaceShare;
 
   @override
   Widget build(BuildContext context) {
-    final textColor = message.isMine ? Colors.white : AppColors.ink;
-    if (message.type.toLowerCase().contains('workspace')) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.space_dashboard_outlined, color: textColor, size: 18),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  message.body.isEmpty ? 'Workspace invitation' : message.body,
-                  style:
-                      TextStyle(color: textColor, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
+    final share = message.workspaceShare;
+    final isShare = message.isWorkspaceShare && share != null;
+    final alignment =
+        message.isMine ? Alignment.centerRight : Alignment.centerLeft;
+    final bubbleColor = message.isMine ? AppColors.ink : AppColors.surface;
+    final textColor = message.isMine ? AppColors.background : AppColors.ink;
+
+    return Align(
+      alignment: alignment,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        constraints:
+            BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .80),
+        decoration: BoxDecoration(
+          color: isShare ? AppColors.surface : bubbleColor,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(18),
+            topRight: const Radius.circular(18),
+            bottomLeft: Radius.circular(message.isMine ? 18 : 6),
+            bottomRight: Radius.circular(message.isMine ? 6 : 18),
           ),
-          if (onAcceptWorkspace != null) ...[
-            const SizedBox(height: 8),
-            FilledButton.tonalIcon(
-              onPressed: onAcceptWorkspace,
-              icon: const Icon(Icons.check),
-              label: const Text('Tham gia'),
-            ),
-          ],
-        ],
-      );
-    }
-    return Text(message.body, style: TextStyle(color: textColor));
+          border: Border.all(
+              color: isShare
+                  ? AppColors.line
+                  : (message.isMine ? AppColors.ink : AppColors.line)),
+        ),
+        child: isShare
+            ? _WorkspaceShareMessage(
+                payload: share,
+                isMine: message.isMine,
+                onAccept: onAcceptWorkspaceShare)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (message.imageUrl?.isNotEmpty == true) ...[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.network(
+                          resolveImageUrl(message.imageUrl) ??
+                              message.imageUrl!,
+                          fit: BoxFit.cover),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  if (message.body.isNotEmpty)
+                    Text(message.body,
+                        style: TextStyle(color: textColor, height: 1.35)),
+                  const SizedBox(height: 4),
+                  Text(shortDate(message.createdDate),
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: message.isMine
+                              ? AppColors.subtle
+                              : AppColors.muted)),
+                ],
+              ),
+      ),
+    );
   }
 }
 
-class _WorkspaceShareResult {
-  const _WorkspaceShareResult({required this.workspaceId, required this.role});
+class _WorkspaceShareMessage extends StatelessWidget {
+  const _WorkspaceShareMessage(
+      {required this.payload, required this.isMine, this.onAccept});
 
-  final String workspaceId;
-  final String role;
-}
+  final WorkspaceSharePayload payload;
+  final bool isMine;
+  final VoidCallback? onAccept;
 
-Future<_WorkspaceShareResult?> _showWorkspaceShareDialog(
-  BuildContext context,
-  List<Workspace> workspaces,
-) {
-  var workspaceId = workspaces.first.id;
-  var role = 'viewer';
-  return showDialog<_WorkspaceShareResult>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: const Text('Chia sẻ workspace'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DropdownButtonFormField<String>(
-              initialValue: workspaceId,
-              decoration: const InputDecoration(labelText: 'Workspace'),
-              items: workspaces
-                  .map((workspace) => DropdownMenuItem(
-                        value: workspace.id,
-                        child: Text(workspace.name),
-                      ))
-                  .toList(),
-              onChanged: (value) =>
-                  setState(() => workspaceId = value ?? workspaceId),
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                  color: AppColors.ink,
+                  borderRadius: BorderRadius.circular(14)),
+              child: Center(
+                  child: Text(
+                      payload.workspaceName.characters.first.toUpperCase(),
+                      style: const TextStyle(
+                          color: AppColors.background,
+                          fontWeight: FontWeight.w900))),
             ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: role,
-              decoration: const InputDecoration(labelText: 'Quyền'),
-              items: const [
-                DropdownMenuItem(value: 'viewer', child: Text('Viewer')),
-                DropdownMenuItem(value: 'member', child: Text('Member')),
-                DropdownMenuItem(value: 'manager', child: Text('Manager')),
-              ],
-              onChanged: (value) => setState(() => role = value ?? 'viewer'),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Workspace invite',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.muted,
+                          fontWeight: FontWeight.w700)),
+                  Text(payload.workspaceName,
+                      style: const TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.w900)),
+                  if (payload.workspaceDescription?.trim().isNotEmpty == true)
+                    Text(payload.workspaceDescription!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: AppColors.muted)),
+                  const SizedBox(height: 6),
+                  Text(
+                      '${payload.workspaceVisibility.toLowerCase() == 'public' ? 'Public' : 'Private'} · ${payload.grantedRole}',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.muted)),
+                ],
+              ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Hủy')),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              context,
-              _WorkspaceShareResult(workspaceId: workspaceId, role: role),
-            ),
-            child: const Text('Gửi'),
-          ),
-        ],
-      ),
-    ),
-  );
+        const SizedBox(height: 12),
+        if (isMine)
+          const Text('You shared this workspace.',
+              style: TextStyle(color: AppColors.muted))
+        else
+          FilledButton.icon(
+              onPressed: onAccept,
+              icon: const Icon(Icons.login_rounded),
+              label: const Text('Open workspace')),
+      ],
+    );
+  }
 }

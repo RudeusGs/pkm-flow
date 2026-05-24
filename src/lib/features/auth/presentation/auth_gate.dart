@@ -19,9 +19,7 @@ class _AuthGateState extends State<AuthGate> {
   void initState() {
     super.initState();
     final deps = AppScope.read(context);
-    _controller =
-        AuthController(repository: deps.authRepository, realtime: deps.realtime)
-          ..bootstrap();
+    _controller = AuthController(repository: deps.authRepository, realtime: deps.realtime)..bootstrap();
   }
 
   @override
@@ -36,8 +34,7 @@ class _AuthGateState extends State<AuthGate> {
       animation: _controller,
       builder: (context, _) {
         if (_controller.isBootstrapping) {
-          return const Scaffold(
-              body: Center(child: CircularProgressIndicator()));
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
         if (!_controller.isAuthenticated) {
           return LoginPage(controller: _controller);

@@ -31,32 +31,19 @@ class Workspace {
 }
 
 class WorkspaceMember {
-  const WorkspaceMember({
-    required this.userId,
-    required this.userName,
-    required this.fullName,
-    required this.email,
-    required this.role,
-    required this.isOwner,
-    required this.isCurrentUser,
-  });
+  const WorkspaceMember({required this.userId, required this.fullName, required this.email, required this.role, required this.isOwner});
 
   final String userId;
-  final String userName;
   final String fullName;
   final String email;
   final String role;
   final bool isOwner;
-  final bool isCurrentUser;
 
   factory WorkspaceMember.fromJson(JsonMap json) => WorkspaceMember(
         userId: asString(json['userId']),
-        userName: asString(json['userName']),
-        fullName:
-            asString(json['fullName'], asString(json['userName'], 'Member')),
+        fullName: asString(json['fullName'], asString(json['userName'], 'Member')),
         email: asString(json['email']),
         role: asString(json['role']),
         isOwner: asBool(json['isOwner']),
-        isCurrentUser: asBool(json['isCurrentUser']),
       );
 }

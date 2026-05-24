@@ -37,9 +37,7 @@ class RealtimeEvent {
             : args;
     final normalized = normalizeJsonKeys(raw);
     final map = asMap(normalized);
-    final payload = map.containsKey('payload')
-        ? normalizeJsonKeys(map['payload'])
-        : normalized;
+    final payload = map.containsKey('payload') ? normalizeJsonKeys(map['payload']) : normalized;
     final payloadMap = asMap(payload);
 
     String? readString(String key) {
