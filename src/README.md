@@ -1,53 +1,45 @@
-# Block Based PKM Flutter
+# Block Based PKM Flutter Mobile
 
-Mobile Flutter client được port lại từ Vue client theo hướng feature-based clean architecture.
+Flutter client đã được chuyển sang giao diện Notion mobile, tách feature-based clean architecture và có realtime SignalR.
 
-## Kiến trúc
+## Điểm chính
 
-```txt
-lib/
-├── main.dart                         # chỉ boot app
-├── app/                              # dependency graph + root app
-├── core/
-│   ├── config/                       # env/base URL
-│   ├── network/                      # Dio API client
-│   ├── realtime/                     # SignalR service + event envelope
-│   ├── storage/                      # secure token store
-│   ├── theme/                        # Notion-like mobile theme
-│   └── utils/
-├── features/
-│   ├── auth/                         # domain/data/presentation
-│   ├── workspaces/
-│   ├── pages/                        # page + block editor mobile
-│   ├── tasks/
-│   ├── inbox/                        # notifications + messages
-│   ├── social/
-│   └── home/
-└── shared/widgets/
-```
+- Workspace là tab đầu tiên: chọn/tạo workspace, xem page list, tạo page, members, invite email, share workspace qua tin nhắn.
+- Notification không còn nằm chung với inbox: icon chuông ở góc phải, mở bottom sheet list thông báo.
+- Tin nhắn có tab riêng: conversation list, chat realtime, hỗ trợ message dạng workspace share.
+- Profile có chỉnh sửa tên, avatar URL và upload avatar qua `me/avatar-image`.
+- Editor kiểu Notion mobile: title/icon đầu page, block menu, thêm paragraph/heading/todo/list/quote/code.
+- Tasks có filter, tạo task, đổi trạng thái và AI recommendations.
+- People có tìm user, gửi friend request và mở chat.
 
-## Realtime
+## Chạy với backend local của bạn
 
-Realtime nằm trong `lib/core/realtime/realtime_service.dart`, dùng SignalR hub:
-
-```txt
-/hubs/collaboration
-```
-
-Các feature tự subscribe event cần thiết:
-
-- Pages: `PageCreated`, `PageUpdated`, `PageDeleted`, `BlockCreated`, `BlockUpdated`, `BlockDeleted`, `BlockDraftChanged`, `PagePresenceChanged`
-- Tasks: `TaskCreated`, `TaskUpdated`, `TaskDeleted`, `TaskStatusChanged`, `RecommendationCreated`
-- Inbox: `NotificationCreated`, `ConversationUpserted`, `MessageCreated`, `ConversationTyping`
-- Social: `FriendRequestReceived`, `FriendRequestAccepted`, `FriendshipChanged`, `FriendRemoved`
-
-Desktop-only đã bỏ: cursor chuột, pointer vị trí chuột, layout nhiều panel.
-
-## Chạy project
+Backend hiện tại: `https://localhost:7286`
 
 ```bash
+flutter clean
 flutter pub get
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:5029/api/v1
+flutter run -d chrome --web-port=60135 --dart-define=API_BASE_URL=https://localhost:7286/api/v1
 ```
 
-Real device cần đổi `10.0.2.2` thành LAN IP của máy chạy backend.
+Mặc định trong `lib/core/config/app_config.dart` cũng đã để:
+
+```dart
+https://localhost:7286/api/v1
+```
+
+Realtime hub tự suy ra:
+
+```txt
+https://localhost:7286/hubs/collaboration
+```
+
+## Lưu ý CORS
+
+Flutter web origin ví dụ:
+
+```txt
+http://localhost:60135
+```
+
+Cần có trong backend `Cors:AllowedOrigins` và nhớ restart backend sau khi sửa config.

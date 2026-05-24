@@ -31,34 +31,10 @@ class WorkTask {
         priority: asString(json['priority'], 'medium'),
         dueDate: json['dueDate']?.toString(),
       );
-
-  WorkTask copyWith({
-    String? title,
-    String? description,
-    String? status,
-    String? priority,
-    String? dueDate,
-  }) {
-    return WorkTask(
-      id: id,
-      title: title ?? this.title,
-      description: description ?? this.description,
-      workspaceId: workspaceId,
-      pageId: pageId,
-      status: status ?? this.status,
-      priority: priority ?? this.priority,
-      dueDate: dueDate ?? this.dueDate,
-    );
-  }
 }
 
 class TaskRecommendation {
-  const TaskRecommendation(
-      {required this.id,
-      required this.taskTitle,
-      this.reason,
-      this.priority = 'medium',
-      this.status = 'pending'});
+  const TaskRecommendation({required this.id, required this.taskTitle, this.reason, this.priority = 'medium', this.status = 'pending'});
 
   final String id;
   final String taskTitle;
@@ -68,40 +44,9 @@ class TaskRecommendation {
 
   factory TaskRecommendation.fromJson(JsonMap json) => TaskRecommendation(
         id: asString(json['id']),
-        taskTitle:
-            asString(json['taskTitle'], asString(json['title'], 'Task gợi ý')),
+        taskTitle: asString(json['taskTitle'], asString(json['title'], 'Task gợi ý')),
         reason: json['reason']?.toString(),
         priority: asString(json['taskPriority'] ?? json['priority'], 'medium'),
         status: asString(json['status'], 'pending'),
-      );
-}
-
-class TaskComment {
-  const TaskComment({
-    required this.id,
-    required this.taskId,
-    required this.userId,
-    required this.content,
-    this.parentId,
-    this.isDeleted = false,
-    this.createdDate,
-  });
-
-  final String id;
-  final String taskId;
-  final String userId;
-  final String content;
-  final String? parentId;
-  final bool isDeleted;
-  final String? createdDate;
-
-  factory TaskComment.fromJson(JsonMap json) => TaskComment(
-        id: asString(json['id']),
-        taskId: asString(json['taskId']),
-        userId: asString(json['userId']),
-        parentId: json['parentId']?.toString(),
-        content: asString(json['content']),
-        isDeleted: asBool(json['isDeleted']),
-        createdDate: json['createdDate']?.toString(),
       );
 }

@@ -1,10 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
 import '../../../core/realtime/realtime_service.dart';
 import '../../../core/utils/session_id.dart';
-import '../../../core/utils/json_utils.dart';
 import '../data/page_repository.dart';
 import '../domain/block_item.dart';
 import '../domain/page_item.dart';
@@ -20,35 +20,27 @@ class PagesController extends ChangeNotifier {
   final String editorSessionId = newEditorSessionId();
   final List<VoidCallback> _unsubscribe = [];
   Timer? _pageHeartbeat;
-  Timer? _leaseRenewal;
   Timer? _debounce;
 
   String? workspaceId;
-  String keyword = '';
   PageItem? selectedPage;
   List<PageItem> pages = const [];
   List<BlockItem> blocks = const [];
-  Map<String, BlockLease> leases = const {};
   int currentRevision = 0;
   int _draftSequence = 0;
   bool isLoading = false;
   String? error;
 
   Future<void> loadPages(String nextWorkspaceId, {String? keyword}) async {
-    if (workspaceId != nextWorkspaceId) {
-      selectedPage = null;
-      blocks = const [];
-      currentRevision = 0;
-      leases = const {};
-    }
     workspaceId = nextWorkspaceId;
-    this.keyword = keyword ?? this.keyword;
     isLoading = true;
     error = null;
     notifyListeners();
     try {
-      pages = await _repository.pages(nextWorkspaceId, keyword: this.keyword);
-      selectedPage ??= pages.isEmpty ? null : pages.first;
+      pages = await _repository.pages(nextWorkspaceId, keyword: keyword);
+      final currentId = selectedPage?.id;
+      selectedPage = pages.where((item) => item.id == currentId).firstOrNull ??
+          (pages.isEmpty ? null : pages.first);
       _bindRealtime();
       if (selectedPage != null) await loadDocument(selectedPage!);
     } catch (err) {
@@ -59,43 +51,39 @@ class PagesController extends ChangeNotifier {
     }
   }
 
-  Future<void> createPage(String title) async {
+  Future<PageItem?> createPage(String title,
+      {String icon = '📝', String? parentPageId}) async {
     final id = workspaceId;
-    if (id == null) {
-      return;
-    }
-    final page = await _repository.createPage(id, title: title, icon: '📝');
+    if (id == null) return null;
+    final page = await _repository.createPage(id,
+        title: title, icon: icon, parentPageId: parentPageId);
     pages = [page, ...pages];
     await loadDocument(page);
+    return page;
   }
 
-  Future<void> renamePage(PageItem page, String title, {String? icon}) async {
-    final updated =
-        await _repository.updatePage(page, title: title, icon: icon);
+  Future<void> updatePageTitle(String title, {String? icon}) async {
+    final page = selectedPage;
+    if (page == null || title.trim().isEmpty) return;
+    final updated = await _repository.updatePage(page,
+        title: title.trim(), icon: icon ?? page.icon);
+    selectedPage = updated;
     pages =
         pages.map((item) => item.id == updated.id ? updated : item).toList();
-    if (selectedPage?.id == updated.id) {
-      selectedPage = updated;
-    }
     notifyListeners();
   }
 
-  Future<void> duplicatePage(PageItem page) async {
-    final created = await _repository.duplicatePage(page.id);
-    pages = [created, ...pages];
-    notifyListeners();
-  }
-
-  Future<void> deletePage(PageItem page) async {
-    await _repository.deletePage(page.id);
-    pages = pages.where((item) => item.id != page.id).toList();
-    if (selectedPage?.id == page.id) {
-      await _realtime.leavePage(page.id);
-      selectedPage = pages.isEmpty ? null : pages.first;
-      blocks = const [];
-      currentRevision = 0;
-      if (selectedPage != null) await loadDocument(selectedPage!);
-    }
+  Future<void> renamePage(PageItem page,
+      {required String title, String? icon}) async {
+    if (title.trim().isEmpty) return;
+    final updated = await _repository.updatePage(
+      page,
+      title: title.trim(),
+      icon: icon ?? page.icon,
+    );
+    pages =
+        pages.map((item) => item.id == updated.id ? updated : item).toList();
+    if (selectedPage?.id == updated.id) selectedPage = updated;
     notifyListeners();
   }
 
@@ -113,7 +101,6 @@ class PagesController extends ChangeNotifier {
       final doc = await _repository.document(page.id);
       currentRevision = doc.currentRevision;
       blocks = doc.blocks;
-      leases = const {};
     } catch (err) {
       error = err.toString();
     } finally {
@@ -122,63 +109,76 @@ class PagesController extends ChangeNotifier {
     }
   }
 
-  Future<void> addBlock(String type) async {
+  Future<BlockItem?> addBlock(String type) async {
     final page = selectedPage;
-    if (page == null) {
-      return;
-    }
+    if (page == null) return null;
     final last = blocks.isEmpty ? null : blocks.last.id;
     final mutation = await _repository.createBlock(
       page.id,
       expectedRevision: currentRevision,
       type: type,
-      textContent: type.startsWith('heading') ? 'Tiêu đề mới' : '',
+      textContent: _defaultTextForType(type),
+      propsJson: _defaultPropsForType(type),
       previousBlockId: last,
     );
     currentRevision = mutation.appliedRevision;
     if (mutation.block != null) blocks = [...blocks, mutation.block!];
     notifyListeners();
+    return mutation.block;
   }
 
-  Future<void> updateBlock(BlockItem block, String type, String text) async {
-    if (!await acquireLease(block)) {
-      return;
-    }
-    final mutation = await _repository.updateBlock(block,
-        expectedRevision: currentRevision,
-        editorSessionId: editorSessionId,
-        textContent: text,
-        type: type);
+  Future<void> updateBlock(BlockItem block, String type, String text,
+      {String? propsJson}) async {
+    final mutation = await _repository.updateBlock(
+      block,
+      expectedRevision: currentRevision,
+      editorSessionId: editorSessionId,
+      textContent: text,
+      type: type,
+      propsJson: propsJson,
+    );
     currentRevision = mutation.appliedRevision;
     if (mutation.block != null) {
       blocks = blocks
           .map((item) => item.id == block.id ? mutation.block! : item)
           .toList();
     }
-    await releaseLease(block);
     notifyListeners();
   }
 
-  Future<void> deleteBlock(BlockItem block) async {
-    if (!await acquireLease(block)) {
-      return;
+  Future<BlockItem?> duplicateBlock(BlockItem block) async {
+    final page = selectedPage;
+    if (page == null) return null;
+    final mutation = await _repository.createBlock(
+      page.id,
+      expectedRevision: currentRevision,
+      type: block.type,
+      textContent: block.textContent,
+      propsJson: block.propsJson,
+      previousBlockId: block.id,
+    );
+    currentRevision = mutation.appliedRevision;
+    if (mutation.block != null) {
+      final index = blocks.indexWhere((item) => item.id == block.id);
+      final next = List<BlockItem>.from(blocks);
+      next.insert(index < 0 ? next.length : index + 1, mutation.block!);
+      blocks = next;
     }
+    notifyListeners();
+    return mutation.block;
+  }
+
+  Future<void> deleteBlock(BlockItem block) async {
     final mutation = await _repository.deleteBlock(block,
         expectedRevision: currentRevision, editorSessionId: editorSessionId);
     currentRevision = mutation.appliedRevision;
     blocks = blocks.where((item) => item.id != block.id).toList();
-    leases = Map<String, BlockLease>.from(leases)..remove(block.id);
     notifyListeners();
   }
 
   Future<void> sendDraft(BlockItem block, String text) async {
     final page = selectedPage;
-    if (page == null) {
-      return;
-    }
-    if (!await acquireLease(block)) {
-      return;
-    }
+    if (page == null) return;
     _draftSequence += 1;
     await _realtime.sendBlockDraft(
       pageId: page.id,
@@ -192,62 +192,30 @@ class PagesController extends ChangeNotifier {
     );
   }
 
-  Future<bool> acquireLease(BlockItem block) async {
-    final existing = leases[block.id];
-    if (existing?.canEdit == true) {
-      return true;
-    }
-    try {
-      final lease = await _repository.acquireBlockLease(block,
-          editorSessionId: editorSessionId);
-      leases = Map<String, BlockLease>.from(leases)..[block.id] = lease;
-      _startLeaseRenewal();
-      notifyListeners();
-      final page = selectedPage;
-      if (lease.canEdit && page != null) {
-        await _realtime.sendBlockEditingState(
-          pageId: page.id,
-          blockId: block.id,
-          editorSessionId: editorSessionId,
-          isEditing: true,
-        );
-      } else {
-        error = lease.holderDisplayName == null
-            ? 'Block đang được người khác chỉnh sửa.'
-            : '${lease.holderDisplayName} đang sửa block này.';
-        notifyListeners();
-      }
-      return lease.canEdit;
-    } catch (err) {
-      error = err.toString();
-      notifyListeners();
-      return false;
-    }
+  String _defaultTextForType(String type) {
+    return switch (type) {
+      'heading_1' => 'Tiêu đề lớn',
+      'heading_2' => 'Tiêu đề nhỏ',
+      'heading_3' => 'Tiêu đề',
+      'todo' => 'Việc cần làm',
+      'quote' => 'Trích dẫn',
+      'code' => '// code',
+      'image' => '',
+      'divider' => '',
+      'table' => '',
+      _ => '',
+    };
   }
 
-  Future<void> releaseLease(BlockItem block) async {
-    final existing = leases[block.id];
-    if (existing?.isHeldByCurrentUser != true) {
-      return;
-    }
-    try {
-      await _repository.releaseBlockLease(block,
-          editorSessionId: editorSessionId);
-      final page = selectedPage;
-      if (page != null) {
-        await _realtime.sendBlockEditingState(
-          pageId: page.id,
-          blockId: block.id,
-          editorSessionId: editorSessionId,
-          isEditing: false,
-        );
-      }
-    } catch (_) {
-    } finally {
-      leases = Map<String, BlockLease>.from(leases)..remove(block.id);
-      _stopLeaseRenewalIfIdle();
-      notifyListeners();
-    }
+  String? _defaultPropsForType(String type) {
+    if (type != 'table') return null;
+    return jsonEncode({
+      'rows': [
+        ['Name', 'Status'],
+        ['', ''],
+      ],
+      'hasHeader': true,
+    });
   }
 
   void _bindRealtime() {
@@ -261,7 +229,12 @@ class PagesController extends ChangeNotifier {
         }
       }));
     }
-    for (final event in ['BlockCreated', 'BlockUpdated', 'BlockDeleted']) {
+    for (final event in [
+      'BlockCreated',
+      'BlockUpdated',
+      'BlockDeleted',
+      'BlockLeaseChanged'
+    ]) {
       _unsubscribe.add(_realtime.on(event, (payload) {
         final page = selectedPage;
         if (page != null &&
@@ -270,24 +243,12 @@ class PagesController extends ChangeNotifier {
         }
       }));
     }
-    _unsubscribe.add(_realtime.on('BlockDraftChanged', (event) {
+    _unsubscribe.add(_realtime.on('BlockDraftChanged', (payload) {
       final page = selectedPage;
-      if (page == null || (event.pageId != null && event.pageId != page.id)) {
-        return;
+      if (page != null &&
+          (payload.pageId == null || payload.pageId == page.id)) {
+        notifyListeners();
       }
-      final payload = event.payloadMap;
-      final blockId = asString(payload['blockId']);
-      final text = payload['textContent']?.toString();
-      if (blockId.isEmpty || text == null) {
-        return;
-      }
-      blocks = blocks
-          .map((item) => item.id == blockId
-              ? item.copyWith(
-                  textContent: text, type: payload['type']?.toString())
-              : item)
-          .toList();
-      notifyListeners();
     }));
     _unsubscribe
         .add(_realtime.on('PagePresenceChanged', (_) => notifyListeners()));
@@ -295,38 +256,13 @@ class PagesController extends ChangeNotifier {
 
   void _debounced(Future<void> Function() action) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () => action());
+    _debounce = Timer(const Duration(milliseconds: 700), () => action());
   }
 
   void _startPageHeartbeat(String pageId) {
     _pageHeartbeat?.cancel();
     _pageHeartbeat = Timer.periodic(
         const Duration(seconds: 25), (_) => _realtime.heartbeatPage(pageId));
-  }
-
-  void _startLeaseRenewal() {
-    _leaseRenewal ??= Timer.periodic(const Duration(seconds: 30), (_) async {
-      final heldBlocks = blocks
-          .where((block) => leases[block.id]?.isHeldByCurrentUser == true)
-          .toList();
-      for (final block in heldBlocks) {
-        try {
-          final lease = await _repository.renewBlockLease(block,
-              editorSessionId: editorSessionId);
-          leases = Map<String, BlockLease>.from(leases)..[block.id] = lease;
-        } catch (_) {}
-      }
-      _stopLeaseRenewalIfIdle();
-      notifyListeners();
-    });
-  }
-
-  void _stopLeaseRenewalIfIdle() {
-    if (leases.values.any((lease) => lease.isHeldByCurrentUser)) {
-      return;
-    }
-    _leaseRenewal?.cancel();
-    _leaseRenewal = null;
   }
 
   @override
@@ -336,10 +272,11 @@ class PagesController extends ChangeNotifier {
     }
     _debounce?.cancel();
     _pageHeartbeat?.cancel();
-    _leaseRenewal?.cancel();
-    if (selectedPage != null) {
-      _realtime.leavePage(selectedPage!.id);
-    }
+    if (selectedPage != null) _realtime.leavePage(selectedPage!.id);
     super.dispose();
   }
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

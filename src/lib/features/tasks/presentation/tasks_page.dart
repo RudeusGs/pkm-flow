@@ -4,6 +4,8 @@ import '../../../app/app_scope.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/json_utils.dart';
 import '../../../shared/widgets/empty_state.dart';
+import '../../../shared/widgets/notion_widgets.dart';
+import '../../pages/domain/page_item.dart';
 import '../../workspaces/domain/workspace.dart';
 import '../domain/work_task.dart';
 import 'tasks_controller.dart';
@@ -19,15 +21,14 @@ class TasksPage extends StatefulWidget {
 
 class _TasksPageState extends State<TasksPage> {
   late final TasksController _controller;
+  String _filter = 'all';
 
   @override
   void initState() {
     super.initState();
     final deps = AppScope.read(context);
     _controller = TasksController(
-        repository: deps.taskRepository,
-        pageRepository: deps.pageRepository,
-        realtime: deps.realtime);
+        repository: deps.taskRepository, realtime: deps.realtime);
     _reload();
   }
 
@@ -37,93 +38,127 @@ class _TasksPageState extends State<TasksPage> {
     if (oldWidget.workspace?.id != widget.workspace?.id) _reload();
   }
 
-  void _reload() {
-    final workspace = widget.workspace;
-    if (workspace != null) _controller.load(workspace.id);
-  }
-
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
+  void _reload() {
+    final workspace = widget.workspace;
+    if (workspace != null) _controller.load(workspace.id);
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (widget.workspace == null) {
-      return const EmptyState(icon: Icons.task_alt, title: 'Chưa có workspace');
+    final workspace = widget.workspace;
+    if (workspace == null) {
+      return const EmptyState(
+        icon: Icons.task_alt_rounded,
+        title: 'No workspace selected',
+        message: 'Choose or create a workspace before adding tasks.',
+      );
     }
+
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
+        final filtered = _controller.tasks
+            .where((task) => _filter == 'all' || task.status == _filter)
+            .toList();
         if (_controller.isLoading && _controller.tasks.isEmpty) {
           return const Center(child: CircularProgressIndicator());
         }
+
         return RefreshIndicator(
-          onRefresh: () => _controller.load(widget.workspace!.id),
+          onRefresh: () => _controller.load(workspace.id),
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 120),
             children: [
               Row(
                 children: [
                   const Expanded(
-                      child: Text('Tasks',
-                          style: TextStyle(
-                              fontSize: 24, fontWeight: FontWeight.w900))),
-                  IconButton.filledTonal(
-                      onPressed: _showCreateTask,
-                      icon: const Icon(Icons.add_task)),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                      onPressed: _controller.generateAi,
-                      icon: const Icon(Icons.auto_awesome)),
-                ],
-              ),
-              if (_controller.error != null) ...[
-                const SizedBox(height: 8),
-                Text(_controller.error!,
-                    style: const TextStyle(color: AppColors.danger)),
-              ],
-              if (_controller.recommendations.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                const Text('Gợi ý AI',
-                    style: TextStyle(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 8),
-                ..._controller.recommendations.map(
-                  (item) => Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.auto_awesome),
-                      title: Text(item.taskTitle,
-                          style: const TextStyle(fontWeight: FontWeight.w800)),
-                      subtitle: Text(item.reason ?? item.priority),
-                      trailing: Wrap(
-                        spacing: 4,
-                        children: [
-                          IconButton(
-                              onPressed: () =>
-                                  _controller.acceptRecommendation(item),
-                              icon: const Icon(Icons.check)),
-                          IconButton(
-                              onPressed: () =>
-                                  _controller.rejectRecommendation(item),
-                              icon: const Icon(Icons.close)),
-                        ],
+                    child: Text(
+                      'Tasks',
+                      style: TextStyle(
+                        color: AppColors.ink,
+                        fontSize: 30,
+                        height: 1.05,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
                   ),
+                  IconButton.outlined(
+                    tooltip: 'AI suggestions',
+                    onPressed: _controller.generateAi,
+                    icon: const Icon(Icons.auto_awesome_rounded),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    tooltip: 'Create task',
+                    onPressed: _showCreateTask,
+                    icon: const Icon(Icons.add_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _FilterPill(
+                        label: 'All',
+                        value: 'all',
+                        selected: _filter,
+                        onSelected: _setFilter),
+                    _FilterPill(
+                        label: 'Todo',
+                        value: 'todo',
+                        selected: _filter,
+                        onSelected: _setFilter),
+                    _FilterPill(
+                        label: 'Doing',
+                        value: 'doing',
+                        selected: _filter,
+                        onSelected: _setFilter),
+                    _FilterPill(
+                        label: 'Done',
+                        value: 'done',
+                        selected: _filter,
+                        onSelected: _setFilter),
+                  ],
                 ),
-                const SizedBox(height: 16),
+              ),
+              if (_controller.recommendations.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                _AiSuggestions(
+                  recommendations: _controller.recommendations,
+                  onRefresh: _controller.generateAi,
+                ),
               ],
-              if (_controller.tasks.isEmpty)
-                const EmptyState(icon: Icons.checklist, title: 'Chưa có task')
+              const SizedBox(height: 18),
+              if (filtered.isEmpty)
+                EmptyState(
+                  icon: Icons.checklist_rounded,
+                  title: 'No tasks here',
+                  message:
+                      'Create a task or generate AI suggestions from this workspace.',
+                  action: NotionButton(
+                    label: 'Create task',
+                    icon: Icons.add_rounded,
+                    onPressed: _showCreateTask,
+                  ),
+                )
               else
-                ..._controller.tasks.map(
-                  (task) => _TaskTile(
-                    task: task,
-                    onTap: () => _openTask(task),
-                    onStatus: (value) => _controller.changeStatus(task, value),
-                    onEdit: () => _showEditTask(task),
-                    onDelete: () => _deleteTask(task),
+                ...filtered.map(
+                  (task) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _TaskTile(
+                      task: task,
+                      onStatus: (value) =>
+                          _controller.changeStatus(task, value),
+                    ),
                   ),
                 ),
             ],
@@ -133,305 +168,355 @@ class _TasksPageState extends State<TasksPage> {
     );
   }
 
+  void _setFilter(String value) => setState(() => _filter = value);
+
   Future<void> _showCreateTask() async {
-    final result = await _showTaskDialog(context, _controller);
-    if (result == null) return;
-    await _controller.createTask(
-      pageId: result.pageId,
-      title: result.title,
-      description: result.description,
-      priority: result.priority,
-      dueDate: result.dueDate,
-    );
-  }
+    final workspace = widget.workspace;
+    if (workspace == null) return;
+    final deps = AppScope.read(context);
+    final pages = await deps.pageRepository.pages(workspace.id);
+    if (!mounted) return;
+    if (pages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Create a page before adding tasks.')),
+      );
+      return;
+    }
 
-  Future<void> _showEditTask(WorkTask task) async {
-    final result = await _showTaskDialog(context, _controller, task: task);
-    if (result == null) return;
-    await _controller.updateTask(
-      task,
-      title: result.title,
-      description: result.description,
-      priority: result.priority,
-      dueDate: result.dueDate,
-    );
-  }
+    final title = TextEditingController();
+    final description = TextEditingController();
+    var priority = 'medium';
+    PageItem selectedPage = pages.first;
 
-  Future<void> _deleteTask(WorkTask task) async {
-    final ok = await showDialog<bool>(
+    final ok = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Xóa task?'),
-        content: Text(task.title),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Hủy')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Xóa')),
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+              20, 0, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const BottomSheetHeader(
+                title: 'New task',
+                subtitle: 'Keep it tied to a page so it is easy to find later.',
+              ),
+              NotionTextField(
+                controller: title,
+                autofocus: true,
+                labelText: 'Task title',
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 10),
+              NotionTextField(
+                controller: description,
+                labelText: 'Description',
+                minLines: 2,
+                maxLines: 5,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<PageItem>(
+                value: selectedPage,
+                decoration: const InputDecoration(labelText: 'Related page'),
+                dropdownColor: AppColors.surface,
+                items: pages
+                    .map(
+                      (page) => DropdownMenuItem(
+                        value: page,
+                        child: Text(
+                          '${page.icon ?? '📄'} ${page.title}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) setSheetState(() => selectedPage = value);
+                },
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  NotionPill(
+                      label: 'Low',
+                      selected: priority == 'low',
+                      onTap: () => setSheetState(() => priority = 'low')),
+                  NotionPill(
+                      label: 'Medium',
+                      selected: priority == 'medium',
+                      onTap: () => setSheetState(() => priority = 'medium')),
+                  NotionPill(
+                      label: 'High',
+                      selected: priority == 'high',
+                      onTap: () => setSheetState(() => priority = 'high')),
+                ],
+              ),
+              const SizedBox(height: 18),
+              NotionButton(
+                label: 'Create task',
+                icon: Icons.add_rounded,
+                expanded: true,
+                onPressed: () => Navigator.pop(context, true),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (ok == true && title.text.trim().isNotEmpty) {
+      await _controller.createTask(
+        pageId: selectedPage.id,
+        title: title.text.trim(),
+        description: description.text.trim(),
+        priority: priority,
+      );
+    }
+  }
+}
+
+class _FilterPill extends StatelessWidget {
+  const _FilterPill({
+    required this.label,
+    required this.value,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final String value;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: NotionPill(
+        label: label,
+        selected: selected == value,
+        onTap: () => onSelected(value),
+      ),
+    );
+  }
+}
+
+class _AiSuggestions extends StatelessWidget {
+  const _AiSuggestions({
+    required this.recommendations,
+    required this.onRefresh,
+  });
+
+  final List<TaskRecommendation> recommendations;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return NotionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome_rounded, color: AppColors.muted),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'AI suggestions',
+                  style: TextStyle(
+                      color: AppColors.ink,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900),
+                ),
+              ),
+              TextButton(onPressed: onRefresh, child: const Text('Refresh')),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...recommendations.take(4).map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: NotionCard(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.taskTitle,
+                          style: const TextStyle(
+                              color: AppColors.ink,
+                              fontWeight: FontWeight.w900),
+                        ),
+                        if ((item.reason ?? item.priority)
+                            .trim()
+                            .isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            item.reason ?? item.priority,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: AppColors.muted, height: 1.35),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
         ],
       ),
     );
-    if (ok == true) await _controller.deleteTask(task);
-  }
-
-  Future<void> _openTask(WorkTask task) async {
-    await _controller.openTask(task);
-    if (!mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => TaskDetailPage(controller: _controller)));
   }
 }
 
 class _TaskTile extends StatelessWidget {
-  const _TaskTile(
-      {required this.task,
-      required this.onTap,
-      required this.onStatus,
-      required this.onEdit,
-      required this.onDelete});
+  const _TaskTile({required this.task, required this.onStatus});
 
   final WorkTask task;
-  final VoidCallback onTap;
   final ValueChanged<String> onStatus;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        onTap: onTap,
-        title: Text(task.title,
-            style: const TextStyle(fontWeight: FontWeight.w800)),
-        subtitle: Text(
-            '${task.priority} • ${task.dueDate == null ? 'Không deadline' : shortDate(task.dueDate)}'),
-        leading: Icon(
-            task.status == 'done'
-                ? Icons.check_circle
-                : Icons.radio_button_unchecked,
-            color: task.status == 'done' ? AppColors.accent : AppColors.muted),
-        trailing: PopupMenuButton<String>(
-          onSelected: (value) {
-            switch (value) {
-              case 'todo':
-              case 'doing':
-              case 'done':
-                onStatus(value);
-                break;
-              case 'edit':
-                onEdit();
-                break;
-              case 'delete':
-                onDelete();
-                break;
-            }
-          },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'todo', child: Text('Todo')),
-            PopupMenuItem(value: 'doing', child: Text('Doing')),
-            PopupMenuItem(value: 'done', child: Text('Done')),
-            PopupMenuDivider(),
-            PopupMenuItem(value: 'edit', child: Text('Sửa')),
-            PopupMenuItem(value: 'delete', child: Text('Xóa')),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class TaskDetailPage extends StatefulWidget {
-  const TaskDetailPage({super.key, required this.controller});
-
-  final TasksController controller;
-
-  @override
-  State<TaskDetailPage> createState() => _TaskDetailPageState();
-}
-
-class _TaskDetailPageState extends State<TaskDetailPage> {
-  final _comment = TextEditingController();
-
-  @override
-  void dispose() {
-    _comment.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) {
-        final task = widget.controller.selectedTask;
-        return Scaffold(
-          appBar: AppBar(title: Text(task?.title ?? 'Task')),
-          body: task == null
-              ? const EmptyState(
-                  icon: Icons.task_alt, title: 'Không tìm thấy task')
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Text(task.title,
-                        style: const TextStyle(
-                            fontSize: 26, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        Chip(label: Text(task.status)),
-                        Chip(label: Text(task.priority)),
-                        if (task.dueDate != null)
-                          Chip(label: Text(shortDate(task.dueDate))),
-                      ],
-                    ),
-                    if (task.description?.isNotEmpty == true) ...[
-                      const SizedBox(height: 12),
-                      Text(task.description!),
-                    ],
-                    const SizedBox(height: 24),
-                    const Text('Bình luận',
-                        style: TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 8),
-                    if (widget.controller.comments.isEmpty)
-                      const EmptyState(
-                          icon: Icons.mode_comment_outlined,
-                          title: 'Chưa có bình luận')
-                    else
-                      ...widget.controller.comments.map((item) => Card(
-                          child: ListTile(
-                              title: Text(item.content),
-                              subtitle: Text(shortDate(item.createdDate))))),
-                    Row(
-                      children: [
-                        Expanded(
-                            child: TextField(
-                                controller: _comment,
-                                decoration: const InputDecoration(
-                                    hintText: 'Thêm bình luận'))),
-                        const SizedBox(width: 8),
-                        IconButton.filled(
-                          onPressed: () async {
-                            final text = _comment.text;
-                            _comment.clear();
-                            await widget.controller.addComment(text);
-                          },
-                          icon: const Icon(Icons.send),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-        );
-      },
-    );
-  }
-}
-
-class _TaskFormResult {
-  const _TaskFormResult(
-      {required this.pageId,
-      required this.title,
-      this.description,
-      required this.priority,
-      this.dueDate});
-
-  final String pageId;
-  final String title;
-  final String? description;
-  final String priority;
-  final String? dueDate;
-}
-
-Future<_TaskFormResult?> _showTaskDialog(
-    BuildContext context, TasksController controller,
-    {WorkTask? task}) {
-  final title = TextEditingController(text: task?.title ?? '');
-  final description = TextEditingController(text: task?.description ?? '');
-  final dueDate = TextEditingController(text: task?.dueDate ?? '');
-  var priority = task?.priority ?? 'medium';
-  var pageId = task?.pageId ??
-      (controller.pages.isEmpty ? '' : controller.pages.first.id);
-
-  return showDialog<_TaskFormResult>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(task == null ? 'Tạo task' : 'Sửa task'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+    final isDone = task.status == 'done';
+    final description = task.description?.trim();
+    return NotionCard(
+      onTap: () => _showStatusSheet(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              DropdownButtonFormField<String>(
-                initialValue: pageId.isEmpty ? null : pageId,
-                decoration: const InputDecoration(labelText: 'Page'),
-                items: controller.pages
-                    .map((page) => DropdownMenuItem(
-                        value: page.id, child: Text(page.title)))
-                    .toList(),
-                onChanged: task == null
-                    ? (value) => setState(() => pageId = value ?? '')
-                    : null,
+              Icon(
+                isDone
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                color: isDone ? AppColors.success : AppColors.muted,
               ),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: title,
-                  decoration: const InputDecoration(labelText: 'Tiêu đề'),
-                  onChanged: (_) => setState(() {})),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: description,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: const InputDecoration(labelText: 'Mô tả')),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: priority,
-                decoration: const InputDecoration(labelText: 'Ưu tiên'),
-                items: const [
-                  DropdownMenuItem(value: 'low', child: Text('Low')),
-                  DropdownMenuItem(value: 'medium', child: Text('Medium')),
-                  DropdownMenuItem(value: 'high', child: Text('High')),
-                ],
-                onChanged: (value) =>
-                    setState(() => priority = value ?? 'medium'),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  task.title,
+                  style: TextStyle(
+                    color: AppColors.ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    decoration: isDone ? TextDecoration.lineThrough : null,
+                    decorationColor: AppColors.muted,
+                  ),
+                ),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: dueDate,
-                  decoration: const InputDecoration(
-                      labelText: 'Due date', hintText: '2026-05-24')),
+              IconButton(
+                tooltip: 'Change status',
+                onPressed: () => _showStatusSheet(context),
+                icon: const Icon(Icons.more_horiz_rounded,
+                    color: AppColors.muted),
+              ),
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Hủy')),
-          FilledButton(
-            onPressed: pageId.isEmpty || title.text.trim().isEmpty
-                ? null
-                : () => Navigator.pop(
-                      context,
-                      _TaskFormResult(
-                        pageId: pageId,
-                        title: title.text.trim(),
-                        description: description.text.trim().isEmpty
-                            ? null
-                            : description.text.trim(),
-                        priority: priority,
-                        dueDate: dueDate.text.trim().isEmpty
-                            ? null
-                            : dueDate.text.trim(),
-                      ),
-                    ),
-            child: const Text('Lưu'),
+          if (description?.isNotEmpty == true) ...[
+            const SizedBox(height: 6),
+            Text(
+              description!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.muted, height: 1.35),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _MetaChip(
+                  label: _statusLabel(task.status), icon: Icons.flag_outlined),
+              _MetaChip(
+                  label: task.priority, icon: Icons.priority_high_rounded),
+              if (task.dueDate != null)
+                _MetaChip(
+                    label: shortDate(task.dueDate), icon: Icons.event_outlined),
+              if (task.pageId?.isNotEmpty == true)
+                const _MetaChip(
+                    label: 'Page linked', icon: Icons.description_outlined),
+            ],
           ),
         ],
       ),
-    ),
-  );
+    );
+  }
+
+  Future<void> _showStatusSheet(BuildContext context) async {
+    final next = await NotionBottomSheet.show<String>(
+      context: context,
+      title: 'Task status',
+      subtitle: task.title,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          NotionActionRow(
+            icon: Icons.radio_button_unchecked_rounded,
+            title: 'Todo',
+            onTap: () => Navigator.pop(context, 'todo'),
+          ),
+          NotionActionRow(
+            icon: Icons.pending_actions_rounded,
+            title: 'Doing',
+            onTap: () => Navigator.pop(context, 'doing'),
+          ),
+          NotionActionRow(
+            icon: Icons.check_circle_rounded,
+            title: 'Done',
+            onTap: () => Navigator.pop(context, 'done'),
+          ),
+        ],
+      ),
+    );
+    if (next != null && next != task.status) onStatus(next);
+  }
+
+  String _statusLabel(String value) => switch (value) {
+        'doing' => 'Doing',
+        'done' => 'Done',
+        _ => 'Todo',
+      };
+}
+
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({required this.label, required this.icon});
+
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 30),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.hover,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppColors.muted),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+                color: AppColors.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+    );
+  }
 }

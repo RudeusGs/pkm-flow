@@ -11,7 +11,7 @@ class BlockBasedApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Block Based PKM',
-      theme: AppTheme.light(),
+      theme: AppTheme.dark(),
       home: const AuthGate(),
     );
   }

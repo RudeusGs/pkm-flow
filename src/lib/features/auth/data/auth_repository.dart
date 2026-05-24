@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+
 import '../../../core/network/api_client.dart';
 import '../../../core/storage/auth_token_store.dart';
 import '../../../core/utils/json_utils.dart';
@@ -5,9 +7,10 @@ import '../domain/auth_token.dart';
 import '../domain/auth_user.dart';
 
 class AuthRepository {
-  const AuthRepository(
-      {required ApiClient apiClient, required AuthTokenStore tokenStore})
-      : _apiClient = apiClient,
+  const AuthRepository({
+    required ApiClient apiClient,
+    required AuthTokenStore tokenStore,
+  })  : _apiClient = apiClient,
         _tokenStore = tokenStore;
 
   final ApiClient _apiClient;
@@ -35,40 +38,69 @@ class AuthRepository {
         'userName': userName,
         'email': email,
         'fullName': fullName,
-        'password': password
+        'password': password,
       },
       parser: (json) => AuthUser.fromJson(asMap(json)),
     );
   }
 
-  Future<AuthUser> me() => _apiClient.get<AuthUser>('me',
-      parser: (json) => AuthUser.fromJson(asMap(json)));
-
-  Future<AuthUser> updateProfile(
-      {required String fullName, String? avatarUrl}) {
-    return _apiClient
-        .patch<AuthUser>(
-      'me/profile',
-      data: {'fullName': fullName, 'avatarUrl': avatarUrl},
+  Future<AuthUser> me() {
+    return _apiClient.get<AuthUser>(
+      'me',
       parser: (json) => AuthUser.fromJson(asMap(json)),
-    )
-        .then((user) async {
-      await _tokenStore.saveUser(user);
-      return user;
+    );
+  }
+
+  Future<AuthUser> updateProfile({
+    required String fullName,
+    String? avatarUrl,
+  }) async {
+    final user = await _apiClient.patch<AuthUser>(
+      'me/profile',
+      data: {
+        'fullName': fullName,
+        'avatarUrl': avatarUrl,
+      },
+      parser: (json) => AuthUser.fromJson(asMap(json)),
+    );
+    await _tokenStore.saveUser(user);
+    return user;
+  }
+
+  Future<AuthUser> uploadAvatarImage({
+    required List<int> bytes,
+    required String fileName,
+  }) async {
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(bytes, filename: fileName),
     });
+
+    final user = await _apiClient.postForm<AuthUser>(
+      'me/avatar-image',
+      formData: formData,
+      parser: (json) => AuthUser.fromJson(asMap(json)),
+    );
+    await _tokenStore.saveUser(user);
+    return user;
   }
 
   Future<void> logout() async {
     final refresh = await _tokenStore.readRefreshToken();
     if (refresh != null && refresh.trim().isNotEmpty) {
       try {
-        await _apiClient.post<void>('auth/logout',
-            data: {'refreshToken': refresh}, parser: (_) {});
-      } catch (_) {}
+        await _apiClient.post<void>(
+          'auth/logout',
+          data: {'refreshToken': refresh},
+          parser: (_) {},
+        );
+      } catch (_) {
+        // Logout local vẫn phải chạy kể cả server đang lỗi.
+      }
     }
     await _tokenStore.clear();
   }
 
   Future<AuthUser?> cachedUser() => _tokenStore.readUser();
+
   Future<bool> hasToken() => _tokenStore.hasToken();
 }
