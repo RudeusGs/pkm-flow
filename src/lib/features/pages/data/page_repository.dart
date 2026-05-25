@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+
 import '../../../core/network/api_client.dart';
 import '../../../core/utils/json_utils.dart';
 import '../domain/block_item.dart';
@@ -25,6 +27,36 @@ class PageRepository {
     );
   }
 
+  Future<PageItem> page(String pageId) {
+    return _apiClient.get<PageItem>(
+      'pages/$pageId',
+      parser: (json) => PageItem.fromJson(asMap(json)),
+    );
+  }
+
+  Future<List<PageItem>> subPages(String pageId) {
+    return _apiClient.get<List<PageItem>>(
+      'pages/$pageId/subpages',
+      parser: (json) => parsePagedItems(json, PageItem.fromJson),
+    );
+  }
+
+  Future<List<PageItem>> favoritePages() {
+    return _apiClient.get<List<PageItem>>(
+      'pages/favorites',
+      query: const {'pageNumber': 1, 'pageSize': 100},
+      parser: (json) => parsePagedItems(json, PageItem.fromJson),
+    );
+  }
+
+  Future<List<PageItem>> recentPages() {
+    return _apiClient.get<List<PageItem>>(
+      'pages/recent',
+      query: const {'pageNumber': 1, 'pageSize': 100},
+      parser: (json) => parsePagedItems(json, PageItem.fromJson),
+    );
+  }
+
   Future<List<PageItem>> trashPages(String workspaceId) {
     return _apiClient.get<List<PageItem>>(
       'workspaces/$workspaceId/pages/trash',
@@ -42,9 +74,10 @@ class PageRepository {
     return _apiClient.post<PageItem>(
       'workspaces/$workspaceId/pages',
       data: {
-        'title': title,
-        'parentPageId': parentPageId,
-        'icon': icon,
+        'title': title.trim().isEmpty ? 'Untitled' : title.trim(),
+        if (parentPageId != null && parentPageId.trim().isNotEmpty)
+          'parentPageId': parentPageId.trim(),
+        if (icon != null && icon.trim().isNotEmpty) 'icon': icon.trim(),
       },
       parser: (json) => PageItem.fromJson(asMap(json)),
     );
@@ -64,6 +97,28 @@ class PageRepository {
         'icon': icon ?? page.icon,
         'coverImage': coverImage ?? page.coverImage,
       },
+      parser: (json) => PageItem.fromJson(asMap(json)),
+    );
+  }
+
+  Future<PageItem> uploadCoverImage(
+    PageItem page, {
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+  }) {
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: fileName.trim().isEmpty ? 'page-cover.jpg' : fileName.trim(),
+        contentType: _safeMediaType(contentType, fileName),
+      ),
+      'expectedRevision': page.currentRevision,
+    });
+
+    return _apiClient.postForm<PageItem>(
+      'pages/${page.id}/cover-image',
+      formData: formData,
       parser: (json) => PageItem.fromJson(asMap(json)),
     );
   }
@@ -239,5 +294,26 @@ class PageRepository {
       data: {'editorSessionId': editorSessionId},
       parser: (json) => BlockLease.fromJson(asMap(json)),
     );
+  }
+
+  static DioMediaType? _safeMediaType(String? contentType, String fileName) {
+    final value = (contentType == null || contentType.trim().isEmpty)
+        ? _contentTypeFromFileName(fileName)
+        : contentType.trim();
+
+    try {
+      return DioMediaType.parse(value);
+    } catch (_) {
+      return DioMediaType.parse('image/jpeg');
+    }
+  }
+
+  static String _contentTypeFromFileName(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    return 'image/jpeg';
   }
 }

@@ -7,9 +7,11 @@ import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/notion_widgets.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../auth/presentation/profile_page.dart';
+import '../../inbox/domain/inbox_models.dart';
 import '../../inbox/presentation/inbox_controller.dart';
 import '../../inbox/presentation/messages_page.dart';
 import '../../inbox/presentation/notification_bell.dart';
+import '../../social/domain/social_models.dart';
 import '../../social/presentation/people_page.dart';
 import '../../tasks/presentation/tasks_page.dart';
 import '../../workspaces/domain/workspace.dart';
@@ -17,9 +19,14 @@ import '../../workspaces/presentation/workspace_controller.dart';
 import '../../workspaces/presentation/workspace_hub_page.dart';
 
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key, required this.authController});
+  const HomeShell({
+    super.key,
+    required this.authController,
+    this.invitationToken,
+  });
 
   final AuthController authController;
+  final String? invitationToken;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -28,6 +35,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   late final WorkspaceController _workspaceController;
   int _tab = 0;
+  bool _handledInvitationToken = false;
 
   @override
   void initState() {
@@ -36,7 +44,8 @@ class _HomeShellState extends State<HomeShell> {
     _workspaceController = WorkspaceController(
       repository: deps.workspaceRepository,
       realtime: deps.realtime,
-    )..load();
+    );
+    _bootstrapWorkspace();
   }
 
   @override
@@ -122,6 +131,32 @@ class _HomeShellState extends State<HomeShell> {
         3 => 'People',
         _ => 'Profile',
       };
+
+  Future<void> _bootstrapWorkspace() async {
+    await _workspaceController.load();
+    await _acceptPendingInvitation();
+  }
+
+  Future<void> _acceptPendingInvitation() async {
+    if (_handledInvitationToken) return;
+    final token = widget.invitationToken?.trim();
+    if (token == null || token.isEmpty) return;
+
+    _handledInvitationToken = true;
+    try {
+      await _workspaceController.acceptInvitation(token);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Workspace invitation accepted.')),
+      );
+      setState(() => _tab = 0);
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not accept invitation: $err')),
+      );
+    }
+  }
 
   Future<void> _openWorkspaceFromMessage(Workspace workspace) async {
     await _workspaceController.openWorkspace(workspace);
@@ -270,11 +305,19 @@ class _HomeShellState extends State<HomeShell> {
     );
 
     if (ok == true && email.text.trim().isNotEmpty) {
-      await _workspaceController.inviteByEmail(
-          email: email.text.trim(), role: role);
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Invite sent.')));
+      try {
+        await _workspaceController.inviteByEmail(
+            email: email.text.trim(), role: role);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invite email sent.')),
+        );
+      } catch (err) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not send invite: $err')),
+        );
+      }
     }
   }
 
@@ -283,8 +326,25 @@ class _HomeShellState extends State<HomeShell> {
     final deps = AppScope.read(context);
     final inbox = InboxController(
         repository: deps.inboxRepository, realtime: deps.realtime);
+    List<FriendItem> friends = const [];
     var role = 'member';
-    await inbox.loadConversations();
+    String? sendingUserId;
+
+    try {
+      final results = await Future.wait([
+        deps.socialRepository.friends(),
+        inbox.loadConversations(silent: true).then((_) => inbox.conversations),
+      ]);
+      friends = results[0] as List<FriendItem>;
+    } catch (err) {
+      inbox.dispose();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load friends: $err')),
+      );
+      return;
+    }
+
     if (!context.mounted) {
       inbox.dispose();
       return;
@@ -309,7 +369,7 @@ class _HomeShellState extends State<HomeShell> {
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
                   child: BottomSheetHeader(
                     title: 'Share via message',
-                    subtitle: 'Send "${workspace.name}" as a workspace card.',
+                    subtitle: 'Send "${workspace.name}" to a friend.',
                   ),
                 ),
                 Padding(
@@ -326,53 +386,80 @@ class _HomeShellState extends State<HomeShell> {
                           label: 'Member',
                           selected: role == 'member',
                           onTap: () => setSheetState(() => role = 'member')),
-                      NotionPill(
-                          label: 'Manager',
-                          selected: role == 'manager',
-                          onTap: () => setSheetState(() => role = 'manager')),
                     ],
                   ),
                 ),
                 Expanded(
-                  child: inbox.conversations.isEmpty
+                  child: friends.isEmpty
                       ? const EmptyState(
-                          icon: Icons.chat_bubble_outline_rounded,
-                          title: 'No conversations yet',
+                          icon: Icons.people_alt_outlined,
+                          title: 'No friends yet',
                           message:
-                              'Open People, start a chat, then share this workspace.',
+                              'Add a friend first, then share this workspace by message.',
                         )
                       : ListView.separated(
                           controller: scrollController,
                           padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-                          itemCount: inbox.conversations.length,
+                          itemCount: friends.length,
                           separatorBuilder: (_, __) =>
                               const SizedBox(height: 10),
                           itemBuilder: (context, index) {
-                            final conversation = inbox.conversations[index];
+                            final friend = friends[index];
+                            final isSending = sendingUserId == friend.userId;
                             return NotionListTile(
                               onTap: () async {
-                                await inbox.sendWorkspaceShare(
-                                  conversation: conversation,
-                                  workspace: workspace,
-                                  role: role,
-                                );
-                                if (!context.mounted) return;
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
+                                if (sendingUserId != null) return;
+                                setSheetState(
+                                    () => sendingUserId = friend.userId);
+                                try {
+                                  final conversation =
+                                      _findConversationWithFriend(
+                                            inbox.conversations,
+                                            friend.userId,
+                                          ) ??
+                                          await deps.inboxRepository
+                                              .createConversation(
+                                                  friend.userId);
+
+                                  await inbox.sendWorkspaceShare(
+                                    conversation: conversation,
+                                    workspace: workspace,
+                                    role: role,
+                                  );
+                                  if (!context.mounted) return;
+                                  Navigator.pop(context);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
                                       content: Text(
-                                          'Workspace shared with ${conversation.otherFullName}.')),
-                                );
+                                          'Workspace shared with ${friend.fullName}.'),
+                                    ),
+                                  );
+                                } catch (err) {
+                                  if (!context.mounted) return;
+                                  setSheetState(() => sendingUserId = null);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                          'Could not share with ${friend.fullName}: $err'),
+                                    ),
+                                  );
+                                }
                               },
                               leading: AppAvatar(
-                                name: conversation.otherFullName,
-                                imageUrl: conversation.otherAvatarUrl,
+                                name: friend.fullName,
+                                imageUrl: friend.avatarUrl,
                                 radius: 22,
                               ),
-                              title: conversation.otherFullName,
-                              subtitle: '@${conversation.otherUserName}',
-                              trailing: const Icon(Icons.send_rounded,
-                                  color: AppColors.muted),
+                              title: friend.fullName,
+                              subtitle: '@${friend.userName}',
+                              trailing: isSending
+                                  ? const SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.send_rounded,
+                                      color: AppColors.muted),
                             );
                           },
                         ),
@@ -385,6 +472,19 @@ class _HomeShellState extends State<HomeShell> {
     );
 
     inbox.dispose();
+  }
+
+  Conversation? _findConversationWithFriend(
+    List<Conversation> conversations,
+    String userId,
+  ) {
+    final id = userId.trim().toLowerCase();
+    for (final conversation in conversations) {
+      if (conversation.otherUserId.trim().toLowerCase() == id) {
+        return conversation;
+      }
+    }
+    return null;
   }
 
   Future<void> _showMembers(BuildContext context, Workspace workspace) async {
@@ -440,7 +540,8 @@ class _HomeShellState extends State<HomeShell> {
                           ),
                           title: member.fullName,
                           subtitle: [
-                            if (member.userName.isNotEmpty) '@${member.userName}',
+                            if (member.userName.isNotEmpty)
+                              '@${member.userName}',
                             if (member.email.isNotEmpty) member.email,
                           ].join(' · '),
                           trailing: Row(
@@ -513,7 +614,9 @@ class _HomeShellState extends State<HomeShell> {
       await _workspaceController.changeRole(member, role);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Changed ${member.fullName} to ${_roleLabel(role)}.')),
+        SnackBar(
+            content:
+                Text('Changed ${member.fullName} to ${_roleLabel(role)}.')),
       );
       return;
     }
@@ -712,7 +815,6 @@ class _WorkspaceMark extends StatelessWidget {
   }
 }
 
-
 class _RoleChip extends StatelessWidget {
   const _RoleChip({required this.label});
 
@@ -739,4 +841,3 @@ class _RoleChip extends StatelessWidget {
     );
   }
 }
-

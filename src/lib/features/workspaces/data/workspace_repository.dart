@@ -3,7 +3,8 @@ import '../../../core/utils/json_utils.dart';
 import '../domain/workspace.dart';
 
 class WorkspaceRepository {
-  const WorkspaceRepository({required ApiClient apiClient}) : _apiClient = apiClient;
+  const WorkspaceRepository({required ApiClient apiClient})
+      : _apiClient = apiClient;
 
   final ApiClient _apiClient;
 
@@ -66,6 +67,14 @@ class WorkspaceRepository {
     return _apiClient.get<List<WorkspaceMember>>(
       'workspaces/$workspaceId/members',
       parser: (json) => asMapList(json).map(WorkspaceMember.fromJson).toList(),
+    );
+  }
+
+  Future<WorkspaceMember> acceptInvitation(String token) {
+    return _apiClient.get<WorkspaceMember>(
+      'workspace-invitations/accept',
+      query: {'token': token},
+      parser: (json) => WorkspaceMember.fromJson(asMap(json)),
     );
   }
 

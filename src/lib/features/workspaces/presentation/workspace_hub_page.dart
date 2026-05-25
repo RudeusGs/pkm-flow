@@ -146,29 +146,39 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
                           if (!_pages.isTrashView) ...[
                             Expanded(
                               child: NotionButton(
-                                label: 'Create page',
+                                label: 'Tạo page',
                                 icon: Icons.note_add_outlined,
                                 expanded: true,
-                                onPressed: () => _showCreatePage(context),
+                                onPressed: _pages.isBusy
+                                    ? null
+                                    : () => _showCreatePage(context),
                               ),
                             ),
                             const SizedBox(width: 10),
                           ],
                           Expanded(
                             child: NotionButton(
-                              label: _pages.isTrashView
-                                  ? 'Back to pages'
-                                  : 'Trash',
+                              label: _pages.isTrashView ? 'Về pages' : 'Trash',
                               icon: _pages.isTrashView
                                   ? Icons.description_outlined
                                   : Icons.delete_outline_rounded,
                               secondary: !_pages.isTrashView,
                               expanded: true,
-                              onPressed: _toggleTrashView,
+                              onPressed:
+                                  _pages.isBusy ? null : _toggleTrashView,
                             ),
                           ),
                         ],
                       ),
+                      if (_pages.error != null) ...[
+                        const SizedBox(height: 12),
+                        _PageErrorBanner(
+                          message: _pages.error!,
+                          onRetry: _pages.isTrashView
+                              ? _loadTrash
+                              : () => _loadPages(keyword: _search.text),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -198,21 +208,21 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
         child: EmptyState(
           icon: Icons.description_outlined,
           title: _search.text.trim().isEmpty
-              ? (_pages.isTrashView ? 'Trash is empty' : 'No pages yet')
-              : 'No matching pages',
+              ? (_pages.isTrashView ? 'Trash đang trống' : 'Chưa có page')
+              : 'Không tìm thấy page',
           message: _search.text.trim().isEmpty
               ? (_pages.isTrashView
-                  ? 'Deleted pages will show up here so you can restore them.'
-                  : 'Create a first page for notes, plans, or anything you want to remember.')
-              : 'Try a shorter search or create a new page.',
+                  ? 'Page đã xóa sẽ nằm ở đây để bạn khôi phục khi cần.'
+                  : 'Tạo page đầu tiên cho ghi chú, kế hoạch hoặc ý tưởng cần giữ lại.')
+              : 'Thử từ khóa ngắn hơn hoặc tạo một page mới.',
           action: _pages.isTrashView
               ? NotionButton(
-                  label: 'Back to pages',
+                  label: 'Về pages',
                   icon: Icons.description_outlined,
                   onPressed: _toggleTrashView,
                 )
               : NotionButton(
-                  label: 'Create page',
+                  label: 'Tạo page',
                   icon: Icons.add_rounded,
                   onPressed: () => _showCreatePage(context),
                 ),
@@ -241,6 +251,13 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
     return Navigator.of(context).push(
       MaterialPageRoute(
           builder: (_) => EditorPage(controller: _pages, page: page)),
+    );
+  }
+
+  void _showPageSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -316,55 +333,66 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
     }
   }
 
-  Future<void> _showCreatePage(BuildContext context) async {
+  Future<void> _showCreatePage(
+    BuildContext context, {
+    PageItem? parentPage,
+  }) async {
     final input = TextEditingController();
     final icon = TextEditingController(text: '📝');
     final title = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(
-            20, 0, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const BottomSheetHeader(
-              title: 'New page',
-              subtitle: 'Give it a simple name. You can change it later.',
-            ),
-            Row(
-              children: [
-                SizedBox(
-                  width: 78,
-                  child: NotionTextField(
-                    controller: icon,
-                    labelText: 'Icon',
-                    textInputAction: TextInputAction.next,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+              20, 0, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              BottomSheetHeader(
+                title: parentPage == null ? 'Tạo page mới' : 'Tạo page con',
+                subtitle: parentPage == null
+                    ? 'Đặt tên ngắn gọn, bạn có thể đổi lại sau.'
+                    : 'Page con sẽ nằm dưới "${parentPage.title}".',
+              ),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 78,
+                    child: NotionTextField(
+                      controller: icon,
+                      labelText: 'Icon',
+                      textInputAction: TextInputAction.next,
+                      onChanged: (_) => setSheetState(() {}),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: NotionTextField(
-                    controller: input,
-                    autofocus: true,
-                    labelText: 'Page title',
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (value) =>
-                        Navigator.pop(context, value.trim()),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: NotionTextField(
+                      controller: input,
+                      autofocus: true,
+                      labelText: 'Tên page',
+                      textInputAction: TextInputAction.done,
+                      onChanged: (_) => setSheetState(() {}),
+                      onSubmitted: (value) =>
+                          Navigator.pop(context, value.trim()),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            NotionButton(
-              label: 'Create page',
-              icon: Icons.add_rounded,
-              expanded: true,
-              onPressed: () => Navigator.pop(context, input.text.trim()),
-            ),
-          ],
+                ],
+              ),
+              const SizedBox(height: 18),
+              NotionButton(
+                label: parentPage == null ? 'Tạo page' : 'Tạo page con',
+                icon: Icons.add_rounded,
+                expanded: true,
+                onPressed: input.text.trim().isEmpty
+                    ? null
+                    : () => Navigator.pop(context, input.text.trim()),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -373,8 +401,13 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
       final created = await _pages.createPage(
         title.trim(),
         icon: icon.text.trim().isEmpty ? '📝' : icon.text.trim(),
+        parentPageId: parentPage?.id,
       );
-      if (!mounted || created == null) return;
+      if (!mounted) return;
+      if (created == null) {
+        _showPageSnack(_pages.error ?? 'Không tạo được page.');
+        return;
+      }
       await _openPage(created);
     }
   }
@@ -451,28 +484,35 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
     final action = await NotionBottomSheet.show<String>(
       context: context,
       title: page.title,
-      subtitle: 'Page actions',
+      subtitle: page.isArchived ? 'Page trong Trash' : 'Thao tác với page',
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           NotionActionRow(
             icon: Icons.open_in_new_rounded,
-            title: 'Open',
+            title: 'Mở page',
             enabled: !page.isArchived,
             onTap: () => Navigator.pop(context, 'open'),
           ),
           NotionActionRow(
             icon: Icons.drive_file_rename_outline_rounded,
-            title: 'Rename',
+            title: 'Đổi tên',
             enabled: !page.isArchived,
             onTap: () => Navigator.pop(context, 'rename'),
           ),
           if (!page.isArchived)
             NotionActionRow(
+              icon: Icons.note_add_outlined,
+              title: 'Tạo page con',
+              subtitle: 'Đặt page mới bên dưới page này.',
+              onTap: () => Navigator.pop(context, 'subpage'),
+            ),
+          if (!page.isArchived)
+            NotionActionRow(
               icon: page.isFavorite
                   ? Icons.star_rounded
                   : Icons.star_border_rounded,
-              title: page.isFavorite ? 'Remove favorite' : 'Add favorite',
+              title: page.isFavorite ? 'Bỏ yêu thích' : 'Thêm yêu thích',
               onTap: () => Navigator.pop(
                 context,
                 page.isFavorite ? 'unfavorite' : 'favorite',
@@ -480,22 +520,22 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
             ),
           NotionActionRow(
             icon: Icons.content_copy_rounded,
-            title: 'Duplicate',
-            subtitle: 'Create a copy of this page.',
+            title: 'Nhân bản',
+            subtitle: 'Tạo một bản sao của page này.',
             enabled: !page.isArchived,
             onTap: () => Navigator.pop(context, 'duplicate'),
           ),
           if (!page.isArchived) ...[
             const NotionActionRow(
               icon: Icons.folder_open_rounded,
-              title: 'Move',
-              subtitle: 'Move page is not wired on mobile yet.',
+              title: 'Di chuyển',
+              subtitle: 'Backend chưa có API di chuyển page trên mobile.',
               enabled: false,
             ),
             const NotionActionRow(
               icon: Icons.ios_share_rounded,
-              title: 'Share',
-              subtitle: 'Workspace sharing is available from the top menu.',
+              title: 'Chia sẻ',
+              subtitle: 'Chia sẻ workspace nằm ở menu phía trên.',
               enabled: false,
             ),
           ],
@@ -503,15 +543,15 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
           if (page.isArchived)
             NotionActionRow(
               icon: Icons.restore_rounded,
-              title: 'Restore page',
-              subtitle: 'Move this page back to the active page list.',
+              title: 'Khôi phục page',
+              subtitle: 'Đưa page này về danh sách đang dùng.',
               onTap: () => Navigator.pop(context, 'restore'),
             )
           else
             NotionActionRow(
               icon: Icons.delete_outline_rounded,
-              title: 'Move to trash',
-              subtitle: 'This page will move to trash and can be restored.',
+              title: 'Đưa vào Trash',
+              subtitle: 'Page có thể khôi phục lại từ Trash.',
               danger: true,
               onTap: () => Navigator.pop(context, 'delete'),
             ),
@@ -523,58 +563,54 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
       await _openPage(page);
     } else if (action == 'rename') {
       await _showRenamePage(page);
+    } else if (action == 'subpage') {
+      if (!mounted) return;
+      await _showCreatePage(context, parentPage: page);
     } else if (action == 'duplicate') {
       final duplicated = await _pages.duplicatePage(page);
-      if (!mounted || duplicated == null) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Duplicated "${page.title}".')),
-      );
+      if (!mounted) return;
+      if (duplicated == null) {
+        _showPageSnack(_pages.error ?? 'Không nhân bản được page.');
+        return;
+      }
+      _showPageSnack('Đã nhân bản "${page.title}".');
     } else if (action == 'favorite') {
       final saved = await _pages.favoritePage(page);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(saved
-              ? 'Added "${page.title}" to favorites.'
-              : _pages.error ?? 'Could not update favorite.'),
-        ),
-      );
+      _showPageSnack(saved
+          ? 'Đã thêm "${page.title}" vào yêu thích.'
+          : _pages.error ?? 'Không cập nhật được yêu thích.');
     } else if (action == 'unfavorite') {
       final saved = await _pages.unfavoritePage(page);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(saved
-              ? 'Removed "${page.title}" from favorites.'
-              : _pages.error ?? 'Could not update favorite.'),
-        ),
-      );
+      _showPageSnack(saved
+          ? 'Đã bỏ "${page.title}" khỏi yêu thích.'
+          : _pages.error ?? 'Không cập nhật được yêu thích.');
     } else if (action == 'restore') {
       final restored = await _pages.restorePage(page);
-      if (!mounted || restored == null) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Restored "${page.title}".')),
-      );
+      if (!mounted) return;
+      if (restored == null) {
+        _showPageSnack(_pages.error ?? 'Không khôi phục được page.');
+        return;
+      }
+      _showPageSnack('Đã khôi phục "${page.title}".');
     } else if (action == 'delete') {
       if (!mounted) return;
       final confirmed = await NotionConfirmDialog.show(
         context: context,
-        title: 'Move page to trash?',
-        message: 'You can restore it later from Trash.',
-        confirmLabel: 'Move',
+        title: 'Đưa page vào Trash?',
+        message: 'Bạn có thể khôi phục page này từ Trash sau.',
+        confirmLabel: 'Đưa vào Trash',
+        cancelLabel: 'Hủy',
         danger: true,
       );
 
       if (!confirmed) return;
       final deleted = await _pages.deletePage(page);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(deleted
-              ? 'Moved "${page.title}" to trash.'
-              : _pages.error ?? 'Could not move page to trash.'),
-        ),
-      );
+      _showPageSnack(deleted
+          ? 'Đã đưa "${page.title}" vào Trash.'
+          : _pages.error ?? 'Không đưa page vào Trash được.');
     }
   }
 
@@ -592,7 +628,7 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const BottomSheetHeader(title: 'Rename page'),
+            const BottomSheetHeader(title: 'Đổi tên page'),
             Row(
               children: [
                 SizedBox(
@@ -604,12 +640,12 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
                     child: NotionTextField(
                         controller: title,
                         autofocus: true,
-                        labelText: 'Title')),
+                        labelText: 'Tên page')),
               ],
             ),
             const SizedBox(height: 18),
             NotionButton(
-              label: 'Save',
+              label: 'Lưu',
               icon: Icons.done_rounded,
               expanded: true,
               onPressed: () => Navigator.pop(context, true),
@@ -619,11 +655,14 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
       ),
     );
     if (ok == true) {
-      await _pages.renamePage(
+      final saved = await _pages.renamePage(
         page,
         title: title.text,
         icon: icon.text.trim().isEmpty ? '📄' : icon.text.trim(),
       );
+      _showPageSnack(saved
+          ? 'Đã lưu page "${title.text.trim()}".'
+          : _pages.error ?? 'Không lưu được page.');
     }
   }
 }
@@ -735,13 +774,17 @@ class _PageTreeTile extends StatelessWidget {
                 color: AppColors.ink, fontWeight: FontWeight.w900),
           ),
           subtitle: Text(
-            page.isArchived ? 'Archived' : 'Revision ${page.currentRevision}',
+            page.isArchived
+                ? 'Trong Trash'
+                : page.parentPageId?.isNotEmpty == true
+                    ? 'Page con · Revision ${page.currentRevision}'
+                    : 'Revision ${page.currentRevision}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: AppColors.muted),
           ),
           trailing: IconButton(
-            tooltip: 'Page actions',
+            tooltip: 'Thao tác page',
             onPressed: onMore,
             icon: const Icon(Icons.more_horiz_rounded, color: AppColors.muted),
           ),
@@ -783,6 +826,46 @@ class _WorkspaceIcon extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PageErrorBanner extends StatelessWidget {
+  const _PageErrorBanner({
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return NotionCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline_rounded, color: AppColors.danger),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.ink,
+                fontWeight: FontWeight.w700,
+                height: 1.3,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('Thử lại'),
+          ),
+        ],
       ),
     );
   }

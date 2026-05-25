@@ -42,7 +42,8 @@ class WorkspaceController extends ChangeNotifier {
     try {
       final previousId = selected?.id;
       workspaces = await _repository.myWorkspaces();
-      selected = _findWorkspace(previousId) ?? (workspaces.isEmpty ? null : workspaces.first);
+      selected = _findWorkspace(previousId) ??
+          (workspaces.isEmpty ? null : workspaces.first);
 
       if (selected != null) {
         await _realtime.joinWorkspace(selected!.id);
@@ -84,7 +85,6 @@ class WorkspaceController extends ChangeNotifier {
     await _realtime.joinWorkspace(workspace.id);
     await loadMembers();
   }
-
 
   Future<void> openWorkspace(Workspace workspace) async {
     final existing = _findWorkspace(workspace.id);
@@ -140,7 +140,9 @@ class WorkspaceController extends ChangeNotifier {
         visibility: visibility,
       );
 
-      workspaces = workspaces.map((item) => item.id == updated.id ? updated : item).toList();
+      workspaces = workspaces
+          .map((item) => item.id == updated.id ? updated : item)
+          .toList();
       selected = updated;
     });
   }
@@ -217,6 +219,16 @@ class WorkspaceController extends ChangeNotifier {
     });
   }
 
+  Future<void> acceptInvitation(String token) async {
+    final cleanToken = token.trim();
+    if (cleanToken.isEmpty) return;
+
+    await _run(() async {
+      await _repository.acceptInvitation(cleanToken);
+      await load();
+    });
+  }
+
   // Alias cho file UI/controller cũ còn gọi inviteMember.
   Future<void> inviteMember({
     required String email,
@@ -230,8 +242,11 @@ class WorkspaceController extends ChangeNotifier {
     if (workspace == null) return;
 
     await _run(() async {
-      final updated = await _repository.changeMemberRole(workspace.id, member.userId, role);
-      members = members.map((item) => item.userId == updated.userId ? updated : item).toList();
+      final updated =
+          await _repository.changeMemberRole(workspace.id, member.userId, role);
+      members = members
+          .map((item) => item.userId == updated.userId ? updated : item)
+          .toList();
     });
   }
 
@@ -280,7 +295,9 @@ class WorkspaceController extends ChangeNotifier {
       _unsubscribe.add(_realtime.on(event, (payload) {
         final current = selected;
         if (current == null) return;
-        if (payload.workspaceId != null && payload.workspaceId != current.id) return;
+        if (payload.workspaceId != null && payload.workspaceId != current.id) {
+          return;
+        }
         _debounceMembersReload();
       }));
     }

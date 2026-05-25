@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/image_url.dart';
@@ -40,11 +41,77 @@ class _EditorPageState extends State<EditorPage> {
     super.dispose();
   }
 
-  Future<void> _saveTitle() async {
-    await widget.controller.updatePageTitle(
+  Future<bool> _saveTitle() async {
+    final saved = await widget.controller.updatePageTitle(
       _title.text,
       icon: _icon.text.trim().isEmpty ? '📝' : _icon.text.trim(),
     );
+    if (!saved && mounted && widget.controller.error != null) {
+      _showSnack(widget.controller.error!);
+    }
+    return saved;
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _setCoverUrl() async {
+    final current = widget.controller.selectedPage ?? widget.page;
+    final input = TextEditingController(text: current.coverImage ?? '');
+    final url = await NotionBottomSheet.show<String>(
+      context: context,
+      title: 'Ảnh bìa page',
+      subtitle: 'Dán URL ảnh hoặc để trống để xóa ảnh bìa.',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          NotionTextField(
+            controller: input,
+            autofocus: true,
+            labelText: 'URL ảnh',
+            prefixIcon: Icons.link_rounded,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (value) => Navigator.pop(context, value.trim()),
+          ),
+          const SizedBox(height: 14),
+          NotionButton(
+            label: 'Lưu ảnh bìa',
+            icon: Icons.done_rounded,
+            expanded: true,
+            onPressed: () => Navigator.pop(context, input.text.trim()),
+          ),
+        ],
+      ),
+    );
+    if (url == null) return;
+
+    final saved = await widget.controller.updatePageCoverUrl(url);
+    if (!mounted) return;
+    _showSnack(saved
+        ? (url.trim().isEmpty ? 'Đã xóa ảnh bìa.' : 'Đã cập nhật ảnh bìa.')
+        : widget.controller.error ?? 'Không cập nhật được ảnh bìa.');
+  }
+
+  Future<void> _uploadCoverImage() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 88,
+    );
+    if (picked == null) return;
+
+    final updated = await widget.controller.uploadCoverImage(
+      bytes: await picked.readAsBytes(),
+      fileName: picked.name,
+      contentType: picked.mimeType,
+    );
+    if (!mounted) return;
+    _showSnack(updated == null
+        ? widget.controller.error ?? 'Không upload được ảnh bìa.'
+        : 'Đã upload ảnh bìa.');
   }
 
   @override
@@ -59,12 +126,27 @@ class _EditorPageState extends State<EditorPage> {
                 Text(page.title, maxLines: 1, overflow: TextOverflow.ellipsis),
             actions: [
               IconButton(
-                tooltip: 'Save title',
+                tooltip: 'Lưu tiêu đề',
                 onPressed: _saveTitle,
                 icon: const Icon(Icons.done_rounded),
               ),
               IconButton(
-                tooltip: 'Add block',
+                tooltip: 'Ảnh bìa',
+                onPressed: _setCoverUrl,
+                icon: const Icon(Icons.image_outlined),
+              ),
+              IconButton(
+                tooltip: 'Upload ảnh bìa',
+                onPressed: widget.controller.isBusy ? null : _uploadCoverImage,
+                icon: widget.controller.isBusy
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cloud_upload_outlined),
+              ),
+              IconButton(
+                tooltip: 'Thêm block',
                 onPressed: () => _showAddBlock(context),
                 icon: const Icon(Icons.add_rounded),
               ),
@@ -72,7 +154,7 @@ class _EditorPageState extends State<EditorPage> {
           ),
           floatingActionButton: FloatingActionButton(
             heroTag: 'editor-add-block',
-            tooltip: 'Add block',
+            tooltip: 'Thêm block',
             onPressed: () => _showAddBlock(context),
             backgroundColor: AppColors.ink,
             foregroundColor: AppColors.background,
@@ -90,9 +172,13 @@ class _EditorPageState extends State<EditorPage> {
                   itemBuilder: (context, index) {
                     if (index == 0) {
                       return _PageHeader(
+                        page: page,
                         icon: _icon,
                         title: _title,
                         onSave: _saveTitle,
+                        onSetCover: _setCoverUrl,
+                        onUploadCover:
+                            widget.controller.isBusy ? null : _uploadCoverImage,
                       );
                     }
 
@@ -156,14 +242,20 @@ class _EditorPageState extends State<EditorPage> {
 
 class _PageHeader extends StatelessWidget {
   const _PageHeader({
+    required this.page,
     required this.icon,
     required this.title,
     required this.onSave,
+    required this.onSetCover,
+    required this.onUploadCover,
   });
 
+  final PageItem page;
   final TextEditingController icon;
   final TextEditingController title;
-  final VoidCallback onSave;
+  final Future<bool> Function() onSave;
+  final VoidCallback onSetCover;
+  final VoidCallback? onUploadCover;
 
   @override
   Widget build(BuildContext context) {
@@ -176,45 +268,149 @@ class _PageHeader extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              width: 92,
-              child: TextField(
-                controller: icon,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 40),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  filled: false,
-                  hintText: '📝',
-                  contentPadding: EdgeInsets.zero,
-                ),
-                onEditingComplete: onSave,
-              ),
+            _CoverPreview(
+              page: page,
+              onSetCover: onSetCover,
+              onUploadCover: onUploadCover,
             ),
-            TextField(
-              controller: title,
-              minLines: 1,
-              maxLines: 3,
-              textInputAction: TextInputAction.done,
-              style: const TextStyle(
-                color: AppColors.ink,
-                fontSize: 34,
-                height: 1.08,
-                fontWeight: FontWeight.w900,
-              ),
-              decoration: const InputDecoration(
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                filled: false,
-                hintText: 'Untitled',
-                contentPadding: EdgeInsets.zero,
-              ),
-              onEditingComplete: onSave,
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 78,
+                  child: TextField(
+                    controller: icon,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 40),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      filled: false,
+                      hintText: '📝',
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    onEditingComplete: onSave,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: title,
+                    minLines: 1,
+                    maxLines: 3,
+                    textInputAction: TextInputAction.done,
+                    style: const TextStyle(
+                      color: AppColors.ink,
+                      fontSize: 34,
+                      height: 1.08,
+                      fontWeight: FontWeight.w900,
+                    ),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      filled: false,
+                      hintText: 'Untitled',
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    onEditingComplete: onSave,
+                  ),
+                ),
+              ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CoverPreview extends StatelessWidget {
+  const _CoverPreview({
+    required this.page,
+    required this.onSetCover,
+    required this.onUploadCover,
+  });
+
+  final PageItem page;
+  final VoidCallback onSetCover;
+  final VoidCallback? onUploadCover;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = resolveImageUrl(page.coverImage ?? '');
+    final hasCover = imageUrl != null && imageUrl.isNotEmpty;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: SizedBox(
+        height: hasCover ? 150 : 54,
+        width: double.infinity,
+        child: Material(
+          color: hasCover ? Colors.transparent : AppColors.surface,
+          child: InkWell(
+            onTap: onSetCover,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (hasCover)
+                  Image.network(
+                    imageUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return const ColoredBox(
+                        color: AppColors.surface,
+                        child: Center(
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      );
+                    },
+                  )
+                else
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.fromBorderSide(
+                        BorderSide(color: AppColors.line),
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Thêm ảnh bìa',
+                        style: TextStyle(
+                          color: AppColors.muted,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton.filledTonal(
+                        tooltip: 'Dán URL ảnh bìa',
+                        onPressed: onSetCover,
+                        icon: const Icon(Icons.link_rounded),
+                      ),
+                      const SizedBox(width: 6),
+                      IconButton.filledTonal(
+                        tooltip: 'Upload ảnh bìa',
+                        onPressed: onUploadCover,
+                        icon: const Icon(Icons.cloud_upload_outlined),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -656,6 +852,7 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
 
   Future<void> _showBlockMenu() async {
     await _commitText();
+    if (!mounted) return;
 
     final action = await BlockActionSheet.show(
       context: context,
@@ -664,6 +861,7 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
       canMoveDown: widget.index < widget.totalCount - 1,
     );
     if (action == null) return;
+    if (!mounted) return;
 
     if (action == 'change_type') {
       final type = await showModalBottomSheet<String>(

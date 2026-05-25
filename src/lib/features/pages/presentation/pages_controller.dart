@@ -39,6 +39,7 @@ class PagesController extends ChangeNotifier {
   int _draftSequence = 0;
   String? activeBlockId;
   bool isLoading = false;
+  bool isBusy = false;
   String? error;
 
   Future<void> loadPages(String nextWorkspaceId, {String? keyword}) async {
@@ -60,13 +61,14 @@ class PagesController extends ChangeNotifier {
     try {
       pages = await _repository.pages(nextWorkspaceId, keyword: this.keyword);
       final currentId = selectedPage?.id;
-      selectedPage = pages.where((item) => item.id == currentId).firstOrNull ??
-          (pages.isEmpty ? null : pages.first);
-      _bindRealtime();
-
-      if (selectedPage != null) {
-        await loadDocument(selectedPage!);
+      selectedPage = pages.where((item) => item.id == currentId).firstOrNull;
+      if (selectedPage == null) {
+        blocks = const [];
+        leases = const {};
+        currentRevision = 0;
+        activeBlockId = null;
       }
+      _bindRealtime();
     } catch (err) {
       error = _message(err);
     } finally {
@@ -110,51 +112,105 @@ class PagesController extends ChangeNotifier {
     final id = workspaceId;
     if (id == null) return null;
 
-    final page = await _repository.createPage(
-      id,
-      title: title,
-      icon: icon,
-      parentPageId: parentPageId,
-    );
+    isBusy = true;
+    error = null;
+    notifyListeners();
 
-    pages = [page, ...pages];
-    await loadDocument(page);
-    return page;
+    try {
+      final page = await _repository.createPage(
+        id,
+        title: title,
+        icon: icon,
+        parentPageId: parentPageId,
+      );
+
+      pages = [page, ...pages];
+      selectedPage = page;
+      blocks = const [];
+      leases = const {};
+      currentRevision = page.currentRevision;
+      activeBlockId = null;
+      return page;
+    } catch (err) {
+      error = _message(err);
+      return null;
+    } finally {
+      isBusy = false;
+      notifyListeners();
+    }
   }
 
-  Future<void> updatePageTitle(String title, {String? icon}) async {
+  Future<bool> updatePageTitle(String title, {String? icon}) async {
     final page = selectedPage;
-    if (page == null || title.trim().isEmpty) return;
+    if (page == null || title.trim().isEmpty) return false;
 
-    final updated = await _repository.updatePage(
+    return _updatePageMetadata(
       page,
       title: title.trim(),
       icon: icon ?? page.icon,
+      coverImage: page.coverImage,
     );
-
-    selectedPage = updated;
-    pages =
-        pages.map((item) => item.id == updated.id ? updated : item).toList();
-    notifyListeners();
   }
 
-  Future<void> renamePage(
+  Future<bool> renamePage(
     PageItem page, {
     required String title,
     String? icon,
   }) async {
-    if (title.trim().isEmpty) return;
+    if (title.trim().isEmpty) return false;
 
-    final updated = await _repository.updatePage(
+    return _updatePageMetadata(
       page,
       title: title.trim(),
       icon: icon ?? page.icon,
+      coverImage: page.coverImage,
     );
+  }
 
-    pages =
-        pages.map((item) => item.id == updated.id ? updated : item).toList();
-    if (selectedPage?.id == updated.id) selectedPage = updated;
+  Future<bool> updatePageCoverUrl(String coverImage) async {
+    final page = selectedPage;
+    if (page == null) return false;
+
+    return _updatePageMetadata(
+      page,
+      title: page.title,
+      icon: page.icon,
+      coverImage: coverImage.trim(),
+    );
+  }
+
+  Future<PageItem?> uploadCoverImage({
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+  }) async {
+    final page = selectedPage;
+    if (page == null) return null;
+
+    isBusy = true;
+    error = null;
     notifyListeners();
+
+    try {
+      final updated = await _repository.uploadCoverImage(
+        page,
+        bytes: bytes,
+        fileName: fileName,
+        contentType: contentType,
+      );
+      _replacePage(updated);
+      currentRevision = updated.currentRevision;
+      return updated;
+    } catch (err) {
+      if (_isRevisionConflict(err)) {
+        await refreshDocument();
+      }
+      error = _message(err);
+      return null;
+    } finally {
+      isBusy = false;
+      notifyListeners();
+    }
   }
 
   Future<PageItem?> duplicatePage(PageItem page) async {
@@ -247,6 +303,51 @@ class PagesController extends ChangeNotifier {
     }
   }
 
+  Future<bool> _updatePageMetadata(
+    PageItem page, {
+    required String title,
+    String? icon,
+    String? coverImage,
+    bool retryOnRevisionConflict = true,
+  }) async {
+    isBusy = true;
+    error = null;
+    notifyListeners();
+
+    try {
+      final latest = selectedPage?.id == page.id ? selectedPage! : page;
+      final updated = await _repository.updatePage(
+        latest,
+        title: title.trim().isEmpty ? 'Untitled' : title.trim(),
+        icon: icon,
+        coverImage: coverImage,
+      );
+
+      _replacePage(updated);
+      currentRevision = updated.currentRevision;
+      error = null;
+      return true;
+    } catch (err) {
+      if (retryOnRevisionConflict && _isRevisionConflict(err)) {
+        await refreshDocument();
+        final refreshed = selectedPage?.id == page.id ? selectedPage! : page;
+        return _updatePageMetadata(
+          refreshed,
+          title: title,
+          icon: icon,
+          coverImage: coverImage,
+          retryOnRevisionConflict: false,
+        );
+      }
+
+      error = _message(err);
+      return false;
+    } finally {
+      isBusy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> loadDocument(PageItem page) async {
     final oldPage = selectedPage;
     if (oldPage != null && oldPage.id != page.id) {
@@ -265,14 +366,13 @@ class PagesController extends ChangeNotifier {
       await _realtime.joinPage(page.id);
       _startPageHeartbeat(page.id);
 
+      final latestPage = await _repository.page(page.id);
       final doc = await _repository.document(page.id);
       currentRevision = doc.currentRevision;
       blocks = _sortBlocks(doc.blocks);
-      selectedPage = page.copyWith(currentRevision: currentRevision);
+      selectedPage = latestPage.copyWith(currentRevision: currentRevision);
       pages = pages
-          .map((item) => item.id == page.id
-              ? item.copyWith(currentRevision: currentRevision)
-              : item)
+          .map((item) => item.id == page.id ? selectedPage! : item)
           .toList();
     } catch (err) {
       error = _message(err);
@@ -654,8 +754,13 @@ class PagesController extends ChangeNotifier {
       }));
     }
 
+    _unsubscribe.add(_realtime.on(
+      'PageMetadataUpdated',
+      _handlePageMetadataUpdated,
+    ));
     _unsubscribe.add(_realtime.on('BlockCreated', _handleBlockCreated));
     _unsubscribe.add(_realtime.on('BlockUpdated', _handleBlockUpdated));
+    _unsubscribe.add(_realtime.on('BlockMoved', _handleBlockUpdated));
     _unsubscribe.add(_realtime.on('BlockDeleted', _handleBlockDeleted));
     _unsubscribe
         .add(_realtime.on('BlockDraftChanged', _handleBlockDraftChanged));
@@ -663,6 +768,26 @@ class PagesController extends ChangeNotifier {
         .add(_realtime.on('BlockLeaseChanged', _handleBlockLeaseChanged));
     _unsubscribe
         .add(_realtime.on('PagePresenceChanged', (_) => notifyListeners()));
+  }
+
+  void _handlePageMetadataUpdated(RealtimeEvent event) {
+    final page = selectedPage;
+    if (page == null) return;
+    if (event.pageId != null && event.pageId != page.id) return;
+
+    final payload = event.payloadMap;
+    if (payload.isEmpty) return;
+
+    final updated = PageItem.fromJson({
+      ...payload,
+      if (event.workspaceId != null) 'workspaceId': event.workspaceId,
+      if (event.pageId != null) 'id': event.pageId,
+      if (event.revision != null) 'currentRevision': event.revision,
+    });
+
+    _replacePage(updated);
+    currentRevision = updated.currentRevision;
+    notifyListeners();
   }
 
   void _handleBlockCreated(RealtimeEvent event) {

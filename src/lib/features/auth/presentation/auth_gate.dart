@@ -14,12 +14,16 @@ class AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<AuthGate> {
   late final AuthController _controller;
+  late final String? _invitationToken;
 
   @override
   void initState() {
     super.initState();
+    _invitationToken = Uri.base.queryParameters['token'];
     final deps = AppScope.read(context);
-    _controller = AuthController(repository: deps.authRepository, realtime: deps.realtime)..bootstrap();
+    _controller =
+        AuthController(repository: deps.authRepository, realtime: deps.realtime)
+          ..bootstrap();
   }
 
   @override
@@ -34,12 +38,16 @@ class _AuthGateState extends State<AuthGate> {
       animation: _controller,
       builder: (context, _) {
         if (_controller.isBootstrapping) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          return const Scaffold(
+              body: Center(child: CircularProgressIndicator()));
         }
         if (!_controller.isAuthenticated) {
           return LoginPage(controller: _controller);
         }
-        return HomeShell(authController: _controller);
+        return HomeShell(
+          authController: _controller,
+          invitationToken: _invitationToken,
+        );
       },
     );
   }
