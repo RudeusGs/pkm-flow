@@ -61,7 +61,7 @@ class PagesController extends ChangeNotifier {
     try {
       pages = await _repository.pages(nextWorkspaceId, keyword: this.keyword);
       final currentId = selectedPage?.id;
-      selectedPage = pages.where((item) => item.id == currentId).firstOrNull;
+      selectedPage = _findPage(currentId);
       if (selectedPage == null) {
         blocks = const [];
         leases = const {};
@@ -75,6 +75,14 @@ class PagesController extends ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  PageItem? _findPage(String? id) {
+    if (id == null) return null;
+    for (final page in pages) {
+      if (page.id == id) return page;
+    }
+    return null;
   }
 
   Future<void> loadTrash(String nextWorkspaceId) async {
@@ -205,6 +213,36 @@ class PagesController extends ChangeNotifier {
       if (_isRevisionConflict(err)) {
         await refreshDocument();
       }
+      error = _message(err);
+      return null;
+    } finally {
+      isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String?> uploadImageFile({
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+    String purpose = 'page-image',
+  }) async {
+    if (bytes.isEmpty) return null;
+
+    isBusy = true;
+    error = null;
+    notifyListeners();
+
+    try {
+      final url = await _repository.uploadImageFile(
+        bytes: bytes,
+        fileName: fileName,
+        contentType: contentType,
+        purpose: purpose,
+      );
+      error = null;
+      return url.trim().isEmpty ? null : url.trim();
+    } catch (err) {
       error = _message(err);
       return null;
     } finally {

@@ -61,39 +61,45 @@ class _EditorPageState extends State<EditorPage> {
 
   Future<void> _setCoverUrl() async {
     final current = widget.controller.selectedPage ?? widget.page;
-    final input = TextEditingController(text: current.coverImage ?? '');
-    final url = await NotionBottomSheet.show<String>(
+    final hasCover = (current.coverImage ?? '').trim().isNotEmpty;
+
+    final action = await NotionBottomSheet.show<String>(
       context: context,
       title: 'Ảnh bìa page',
-      subtitle: 'Dán URL ảnh hoặc để trống để xóa ảnh bìa.',
+      subtitle: 'Chọn ảnh từ máy. Không nhập URL thủ công nữa.',
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          NotionTextField(
-            controller: input,
-            autofocus: true,
-            labelText: 'URL ảnh',
-            prefixIcon: Icons.link_rounded,
-            textInputAction: TextInputAction.done,
-            onSubmitted: (value) => Navigator.pop(context, value.trim()),
+          NotionActionRow(
+            icon: Icons.cloud_upload_outlined,
+            title: hasCover ? 'Đổi ảnh bìa' : 'Upload ảnh bìa',
+            subtitle: 'Chọn file ảnh từ thiết bị.',
+            onTap: () => Navigator.pop(context, 'upload'),
           ),
-          const SizedBox(height: 14),
-          NotionButton(
-            label: 'Lưu ảnh bìa',
-            icon: Icons.done_rounded,
-            expanded: true,
-            onPressed: () => Navigator.pop(context, input.text.trim()),
-          ),
+          if (hasCover)
+            NotionActionRow(
+              icon: Icons.delete_outline_rounded,
+              title: 'Xóa ảnh bìa',
+              subtitle: 'Gỡ ảnh bìa khỏi page này.',
+              danger: true,
+              onTap: () => Navigator.pop(context, 'remove'),
+            ),
         ],
       ),
     );
-    if (url == null) return;
 
-    final saved = await widget.controller.updatePageCoverUrl(url);
-    if (!mounted) return;
-    _showSnack(saved
-        ? (url.trim().isEmpty ? 'Đã xóa ảnh bìa.' : 'Đã cập nhật ảnh bìa.')
-        : widget.controller.error ?? 'Không cập nhật được ảnh bìa.');
+    if (action == 'upload') {
+      await _uploadCoverImage();
+      return;
+    }
+
+    if (action == 'remove') {
+      final saved = await widget.controller.updatePageCoverUrl('');
+      if (!mounted) return;
+      _showSnack(saved
+          ? 'Đã xóa ảnh bìa.'
+          : widget.controller.error ?? 'Không xóa được ảnh bìa.');
+    }
   }
 
   Future<void> _uploadCoverImage() async {
@@ -203,6 +209,16 @@ class _EditorPageState extends State<EditorPage> {
                         type,
                         text,
                         propsJson: propsJson,
+                      ),
+                      onUploadImage: ({
+                        required List<int> bytes,
+                        required String fileName,
+                        String? contentType,
+                      }) =>
+                          widget.controller.uploadImageFile(
+                        bytes: bytes,
+                        fileName: fileName,
+                        contentType: contentType,
                       ),
                       onDraft: (text) =>
                           widget.controller.sendDraft(block, text),
@@ -395,9 +411,9 @@ class _CoverPreview extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton.filledTonal(
-                        tooltip: 'Dán URL ảnh bìa',
+                        tooltip: 'Đổi ảnh bìa',
                         onPressed: onSetCover,
-                        icon: const Icon(Icons.link_rounded),
+                        icon: const Icon(Icons.image_outlined),
                       ),
                       const SizedBox(width: 6),
                       IconButton.filledTonal(
@@ -424,6 +440,7 @@ class BlockEditorTile extends StatefulWidget {
     required this.index,
     required this.totalCount,
     required this.onChanged,
+    required this.onUploadImage,
     required this.onDraft,
     required this.onDuplicate,
     required this.onDelete,
@@ -441,6 +458,11 @@ class BlockEditorTile extends StatefulWidget {
   final int totalCount;
   final Future<void> Function(String type, String text, {String? propsJson})
       onChanged;
+  final Future<String?> Function({
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+  }) onUploadImage;
   final Future<void> Function(String text) onDraft;
   final Future<void> Function() onDuplicate;
   final Future<void> Function() onDelete;
@@ -577,6 +599,37 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
     }
   }
 
+  Future<void> _pickAndUploadImage() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 88,
+      maxWidth: 2200,
+    );
+    if (picked == null) return;
+
+    setState(() => _saving = true);
+    try {
+      final url = await widget.onUploadImage(
+        bytes: await picked.readAsBytes(),
+        fileName: picked.name,
+        contentType: picked.mimeType,
+      );
+      if (url == null || url.trim().isEmpty) return;
+
+      _draftTimer?.cancel();
+      _saveTimer?.cancel();
+      _text.text = url.trim();
+      await widget.onChanged(_type, _text.text, propsJson: _currentPropsJson);
+      _lastCommittedType = _type;
+      _lastCommittedText = _text.text;
+      _lastCommittedPropsJson = _currentPropsJson;
+    } catch (err) {
+      _showError(err);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final showLockHint =
@@ -654,12 +707,11 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
     if (_type == 'image') {
       return _ImageBlockEditor(
         controller: _text,
-        focusNode: _focusNode,
         saving: _saving,
-        onChanged: _handleTextChanged,
-        onCommit: _commitText,
+        onUpload: _pickAndUploadImage,
         onClear: () {
           _text.clear();
+          _handleTextChanged('');
           _commitText();
         },
       );
@@ -964,92 +1016,92 @@ class _BlockHandle extends StatelessWidget {
 class _ImageBlockEditor extends StatelessWidget {
   const _ImageBlockEditor({
     required this.controller,
-    required this.focusNode,
     required this.saving,
-    required this.onChanged,
-    required this.onCommit,
+    required this.onUpload,
     required this.onClear,
   });
 
   final TextEditingController controller;
-  final FocusNode focusNode;
   final bool saving;
-  final ValueChanged<String> onChanged;
-  final Future<void> Function() onCommit;
+  final Future<void> Function() onUpload;
   final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
     final url = resolveImageUrl(controller.text.trim());
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (url != null && url.isNotEmpty) ...[
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.network(
-              url,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return NotionCard(
-                  child: Row(
-                    children: const [
-                      Icon(Icons.broken_image_outlined, color: AppColors.muted),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Image preview is unavailable.',
-                          style: TextStyle(color: AppColors.muted),
-                        ),
+    final hasImage = url != null && url.isNotEmpty;
+
+    return NotionCard(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (hasImage) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.network(
+                url,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                errorBuilder: (context, error, stackTrace) {
+                  return const SizedBox(
+                    height: 120,
+                    child: Center(
+                      child: Icon(
+                        Icons.broken_image_outlined,
+                        color: AppColors.muted,
                       ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: controller,
-                focusNode: focusNode,
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.done,
-                style: const TextStyle(
-                  color: AppColors.ink,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
-                decoration: const InputDecoration(
-                  hintText: 'Paste image URL',
-                  prefixIcon: Icon(Icons.link_rounded),
-                ),
-                onChanged: onChanged,
-                onEditingComplete: () {
-                  onCommit();
-                },
-                onSubmitted: (_) {
-                  onCommit();
+                    ),
+                  );
                 },
               ),
             ),
-            const SizedBox(width: 8),
-            IconButton.outlined(
-              tooltip: 'Remove image URL',
-              onPressed: controller.text.trim().isEmpty ? null : onClear,
-              icon: saving
-                  ? const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.close_rounded),
+            const SizedBox(height: 10),
+          ] else
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.image_outlined, color: AppColors.muted),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Chưa có ảnh. Hãy upload file từ máy.',
+                      style: TextStyle(
+                        color: AppColors.muted,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-      ],
+          Row(
+            children: [
+              Expanded(
+                child: NotionButton(
+                  label: hasImage ? 'Đổi ảnh' : 'Upload ảnh',
+                  icon: Icons.cloud_upload_outlined,
+                  onPressed: saving ? null : () => onUpload(),
+                ),
+              ),
+              if (hasImage) ...[
+                const SizedBox(width: 8),
+                IconButton.outlined(
+                  tooltip: 'Xóa ảnh',
+                  onPressed: saving ? null : () => onClear(),
+                  icon: saving
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.close_rounded),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

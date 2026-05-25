@@ -29,6 +29,25 @@ double asDouble(Object? value, [double fallback = 0]) {
   return double.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
+List<String> _parseAssigneeUserIds(Object? value) {
+  if (value is! List) return const <String>[];
+
+  final ids = <String>[];
+  for (final item in value) {
+    if (item is Map) {
+      final map = asMap(item);
+      final id = asString(map['userId'] ?? map['id']);
+      if (id.trim().isNotEmpty) ids.add(id.trim());
+      continue;
+    }
+
+    final id = item?.toString().trim() ?? '';
+    if (id.isNotEmpty) ids.add(id);
+  }
+
+  return ids.toSet().toList();
+}
+
 class WorkTask {
   const WorkTask({
     required this.id,
@@ -39,6 +58,7 @@ class WorkTask {
     this.status = 'todo',
     this.priority = 'medium',
     this.dueDate,
+    this.assigneeUserIds = const <String>[],
   });
 
   final String id;
@@ -49,6 +69,34 @@ class WorkTask {
   final String status;
   final String priority;
   final String? dueDate;
+  final List<String> assigneeUserIds;
+
+  bool get isDone => status == 'done';
+  bool get hasAssignees => assigneeUserIds.isNotEmpty;
+
+  WorkTask copyWith({
+    String? id,
+    String? title,
+    String? description,
+    String? workspaceId,
+    String? pageId,
+    String? status,
+    String? priority,
+    String? dueDate,
+    List<String>? assigneeUserIds,
+  }) {
+    return WorkTask(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      workspaceId: workspaceId ?? this.workspaceId,
+      pageId: pageId ?? this.pageId,
+      status: status ?? this.status,
+      priority: priority ?? this.priority,
+      dueDate: dueDate ?? this.dueDate,
+      assigneeUserIds: assigneeUserIds ?? this.assigneeUserIds,
+    );
+  }
 
   factory WorkTask.fromJson(JsonMap json) => WorkTask(
         id: asString(json['id']),
@@ -59,6 +107,47 @@ class WorkTask {
         status: normalizeTaskStatus(json['status']),
         priority: normalizeTaskPriority(json['priority']),
         dueDate: json['dueDate']?.toString(),
+        assigneeUserIds: _parseAssigneeUserIds(
+          json['assignees'] ?? json['assigneeUserIds'] ?? json['assignedUserIds'],
+        ),
+      );
+}
+
+class TaskComment {
+  const TaskComment({
+    required this.id,
+    required this.taskId,
+    required this.userId,
+    required this.content,
+    this.parentId,
+    this.isDeleted = false,
+    this.createdDate,
+    this.updatedDate,
+    this.deletedDate,
+  });
+
+  final String id;
+  final String taskId;
+  final String userId;
+  final String? parentId;
+  final String content;
+  final bool isDeleted;
+  final String? createdDate;
+  final String? updatedDate;
+  final String? deletedDate;
+
+  bool get isReply => parentId != null && parentId!.trim().isNotEmpty;
+
+  factory TaskComment.fromJson(JsonMap json) => TaskComment(
+        id: asString(json['id']),
+        taskId: asString(json['taskId']),
+        userId: asString(json['userId']),
+        parentId: json['parentId']?.toString(),
+        content: asString(json['content']),
+        isDeleted: asBool(json['isDeleted']),
+        createdDate: json['createdDate']?.toString(),
+        updatedDate: json['updatedDate']?.toString(),
+        deletedDate: json['deletedDate']?.toString(),
       );
 }
 

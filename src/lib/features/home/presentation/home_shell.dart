@@ -38,6 +38,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   late final WorkspaceController _workspaceController;
   int _tab = 0;
+  int _workspaceHubVersion = 0;
   bool _handledInvitationToken = false;
 
   @override
@@ -65,7 +66,10 @@ class _HomeShellState extends State<HomeShell> {
       builder: (context, _) {
         final workspace = _workspaceController.selected;
         final pages = <Widget>[
-          WorkspaceHubPage(workspaceController: _workspaceController),
+          WorkspaceHubPage(
+            key: ValueKey('${workspace?.id ?? 'none'}-$_workspaceHubVersion'),
+            workspaceController: _workspaceController,
+          ),
           TasksPage(workspace: workspace),
           MessagesPage(onWorkspaceOpened: _openWorkspaceFromMessage),
           PeoplePage(onWorkspaceOpened: _openWorkspaceFromMessage),
@@ -156,7 +160,7 @@ class _HomeShellState extends State<HomeShell> {
     } catch (err) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not accept invitation: $err')),
+        const SnackBar(content: Text('Không thao tác được.')),
       );
     }
   }
@@ -183,7 +187,7 @@ class _HomeShellState extends State<HomeShell> {
                 ? 'Create a workspace first.'
                 : workspace.canManageMembersEffective
                     ? 'Send a workspace card to a chat.'
-                    : 'Owner/Manager permission is required.',
+                    : 'Không có quyền thực hiện thao tác này.',
             enabled: workspace?.canManageMembersEffective == true,
             onTap: () {
               Navigator.pop(context);
@@ -197,7 +201,7 @@ class _HomeShellState extends State<HomeShell> {
                 ? 'Create a workspace first.'
                 : workspace.canManageMembersEffective
                     ? 'Invite someone with a role.'
-                    : 'Only Owner/Manager can invite members.',
+                    : 'Không có quyền thực hiện thao tác này.',
             enabled: workspace?.canManageMembersEffective == true,
             onTap: () {
               Navigator.pop(context);
@@ -246,6 +250,17 @@ class _HomeShellState extends State<HomeShell> {
               if (workspace != null) _openWorkspaceTrash(context, workspace);
             },
           ),
+          if (workspace != null && workspace.canDeleteWorkspaceEffective)
+            NotionActionRow(
+              icon: Icons.delete_forever_rounded,
+              title: 'Delete workspace',
+              subtitle: 'Xóa workspace này.',
+              danger: true,
+              onTap: () {
+                Navigator.pop(context);
+                _confirmDeleteWorkspace(context);
+              },
+            ),
           NotionActionRow(
             icon: Icons.person_outline_rounded,
             title: 'Profile',
@@ -301,7 +316,13 @@ class _HomeShellState extends State<HomeShell> {
 
     // Ép WorkspaceHubPage reload lại page list sau khi restore trong Trash.
     await _workspaceController.openWorkspace(workspace);
-    if (mounted) setState(() => _tab = 0);
+    await _workspaceController.load();
+    if (mounted) {
+      setState(() {
+        _tab = 0;
+        _workspaceHubVersion++;
+      });
+    }
   }
 
   Future<void> _showInviteEmail(BuildContext context) async {
@@ -380,7 +401,7 @@ class _HomeShellState extends State<HomeShell> {
       } catch (err) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not send invite: $err')),
+          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
         );
       }
     }
@@ -405,7 +426,7 @@ class _HomeShellState extends State<HomeShell> {
       inbox.dispose();
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not load friends: $err')),
+        const SnackBar(content: Text('Không thao tác được.')),
       );
       return;
     }
@@ -503,10 +524,7 @@ class _HomeShellState extends State<HomeShell> {
                                   if (!context.mounted) return;
                                   setSheetState(() => sendingUserId = null);
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                          'Could not share with ${friend.fullName}: $err'),
-                                    ),
+                                    const SnackBar(content: Text('Không thao tác được.')),
                                   );
                                 }
                               },
@@ -684,7 +702,7 @@ class _HomeShellState extends State<HomeShell> {
       } catch (err) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Không đổi quyền được: $err')),
+          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
         );
       }
       return;
@@ -711,7 +729,7 @@ class _HomeShellState extends State<HomeShell> {
       } catch (err) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Không xóa member được: $err')),
+          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
         );
       }
     }
@@ -793,14 +811,14 @@ class _HomeShellState extends State<HomeShell> {
               NotionButton(
                 label: workspace.canManageSettingsEffective
                     ? 'Save changes'
-                    : 'Only Owner/Manager can edit',
+                    : 'Không có quyền chỉnh sửa',
                 icon: Icons.done_rounded,
                 expanded: true,
                 onPressed: workspace.canManageSettingsEffective
                     ? () => Navigator.pop(context, 'save')
                     : null,
               ),
-              if (!workspace.canDeleteWorkspace) ...[
+              if (!workspace.canDeleteWorkspaceEffective) ...[
                 const SizedBox(height: 10),
                 NotionButton(
                   label: 'Leave workspace',
@@ -810,7 +828,7 @@ class _HomeShellState extends State<HomeShell> {
                   onPressed: () => Navigator.pop(context, 'leave'),
                 ),
               ],
-              if (workspace.canDeleteWorkspace) ...[
+              if (workspace.canDeleteWorkspaceEffective) ...[
                 const SizedBox(height: 10),
                 NotionButton(
                   label: 'Delete workspace',
@@ -827,11 +845,22 @@ class _HomeShellState extends State<HomeShell> {
     );
 
     if (action == 'save' && name.text.trim().isNotEmpty) {
-      await _workspaceController.updateSelected(
-        name: name.text.trim(),
-        description: description.text.trim(),
-        visibility: visibility,
-      );
+      try {
+        await _workspaceController.updateSelected(
+          name: name.text.trim(),
+          description: description.text.trim(),
+          visibility: visibility,
+        );
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Workspace saved.')),
+        );
+      } catch (err) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
+        );
+      }
       return;
     }
 
@@ -843,20 +872,62 @@ class _HomeShellState extends State<HomeShell> {
         confirmLabel: 'Leave',
         danger: true,
       );
-      if (confirmed) await _workspaceController.leaveSelected();
+      if (!confirmed) return;
+
+      try {
+        await _workspaceController.leaveSelected();
+        if (mounted) setState(() => _tab = 0);
+      } catch (err) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
+        );
+      }
       return;
     }
 
     if (action == 'delete') {
-      final confirmed = await NotionConfirmDialog.show(
-        context: context,
-        title: 'Delete workspace?',
-        message:
-            'This removes the workspace for everyone. This cannot be undone.',
-        confirmLabel: 'Delete',
-        danger: true,
+      await _confirmDeleteWorkspace(context);
+    }
+  }
+
+
+  Future<void> _confirmDeleteWorkspace(BuildContext context) async {
+    final workspace = _workspaceController.selected;
+    if (workspace == null) return;
+
+    if (!workspace.canDeleteWorkspaceEffective) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không có quyền thực hiện thao tác này.')),
       );
-      if (confirmed) await _workspaceController.deleteSelected();
+      return;
+    }
+
+    final confirmed = await NotionConfirmDialog.show(
+      context: context,
+      title: 'Delete workspace?',
+      message: 'This removes the workspace for everyone. This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await _workspaceController.deleteSelected();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đã xóa workspace.')),
+      );
+      setState(() => _tab = 0);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              Text(_workspaceController.error ?? 'Không thao tác được.'),
+        ),
+      );
     }
   }
 

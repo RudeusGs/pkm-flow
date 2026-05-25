@@ -70,9 +70,14 @@ class AuthRepository {
   Future<AuthUser> uploadAvatarImage({
     required List<int> bytes,
     required String fileName,
+    String? contentType,
   }) async {
     final formData = FormData.fromMap({
-      'file': MultipartFile.fromBytes(bytes, filename: fileName),
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: fileName.trim().isEmpty ? 'avatar.jpg' : fileName.trim(),
+        contentType: _safeMediaType(contentType, fileName),
+      ),
     });
 
     final user = await _apiClient.postForm<AuthUser>(
@@ -117,4 +122,25 @@ class AuthRepository {
   Future<AuthUser?> cachedUser() => _tokenStore.readUser();
 
   Future<bool> hasToken() => _tokenStore.hasToken();
+
+  static DioMediaType? _safeMediaType(String? contentType, String fileName) {
+    final value = (contentType == null || contentType.trim().isEmpty)
+        ? _contentTypeFromFileName(fileName)
+        : contentType.trim();
+
+    try {
+      return DioMediaType.parse(value);
+    } catch (_) {
+      return DioMediaType.parse('image/jpeg');
+    }
+  }
+
+  static String _contentTypeFromFileName(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    return 'image/jpeg';
+  }
 }

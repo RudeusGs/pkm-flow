@@ -19,6 +19,7 @@ class InboxController extends ChangeNotifier {
   final InboxRepository _repository;
   final RealtimeService _realtime;
   final List<VoidCallback> _unsubscribe = [];
+  final Set<String> _conversationSubscriptions = <String>{};
   Timer? _debounce;
 
   List<NotificationItem> notifications = const [];
@@ -130,6 +131,7 @@ class InboxController extends ChangeNotifier {
     try {
       conversations = await _repository.conversations();
       _bindRealtime();
+      await _syncConversationSubscriptions();
       unawaited(_ensureRealtime());
     } catch (err) {
       error = err.toString();
@@ -159,7 +161,8 @@ class InboxController extends ChangeNotifier {
     selectedConversation = null;
     typingText = null;
     messages = const [];
-    await _realtime.leaveConversation(conversation.id);
+    // Vẫn giữ subscription conversation ở màn list để preview tin nhắn mới
+    // cập nhật ngay, không cần mở chat mới thấy.
     notifyListeners();
   }
 
@@ -234,6 +237,25 @@ class InboxController extends ChangeNotifier {
     final conversation = selectedConversation;
     if (conversation == null) return;
     await _realtime.sendConversationTyping(conversation.id, isTyping);
+  }
+
+  Future<void> _syncConversationSubscriptions() async {
+    final nextIds = conversations
+        .map((conversation) => conversation.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    for (final removed in _conversationSubscriptions.difference(nextIds)) {
+      await _realtime.leaveConversation(removed);
+    }
+
+    for (final added in nextIds.difference(_conversationSubscriptions)) {
+      await _realtime.joinConversation(added);
+    }
+
+    _conversationSubscriptions
+      ..clear()
+      ..addAll(nextIds);
   }
 
   void _bindRealtime() {
@@ -400,7 +422,11 @@ class InboxController extends ChangeNotifier {
       off();
     }
     _debounce?.cancel();
-    if (selectedConversation != null) {
+    for (final id in _conversationSubscriptions) {
+      _realtime.leaveConversation(id);
+    }
+    if (selectedConversation != null &&
+        !_conversationSubscriptions.contains(selectedConversation!.id)) {
       _realtime.leaveConversation(selectedConversation!.id);
     }
     super.dispose();

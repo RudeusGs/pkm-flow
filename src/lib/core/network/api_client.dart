@@ -42,27 +42,73 @@ class ApiClient {
   final AuthTokenStore tokenStore;
   late final Dio _dio;
 
-  Future<T> get<T>(String path, {Map<String, dynamic>? query, required T Function(Object? json) parser}) {
+  Future<T> get<T>(
+    String path, {
+    Map<String, dynamic>? query,
+    required T Function(Object? json) parser,
+  }) {
     return request<T>('GET', path, query: query, parser: parser);
   }
 
-  Future<T> post<T>(String path, {Object? data, Map<String, dynamic>? query, required T Function(Object? json) parser}) {
-    return request<T>('POST', path, data: data, query: query, parser: parser);
+  Future<T> post<T>(
+    String path, {
+    Object? data,
+    Map<String, dynamic>? query,
+    required T Function(Object? json) parser,
+  }) {
+    return request<T>(
+      'POST',
+      path,
+      data: data,
+      query: query,
+      parser: parser,
+    );
   }
 
-  Future<T> put<T>(String path, {Object? data, required T Function(Object? json) parser}) {
+  Future<T> put<T>(
+    String path, {
+    Object? data,
+    required T Function(Object? json) parser,
+  }) {
     return request<T>('PUT', path, data: data, parser: parser);
   }
 
-  Future<T> patch<T>(String path, {Object? data, Map<String, dynamic>? query, required T Function(Object? json) parser}) {
-    return request<T>('PATCH', path, data: data, query: query, parser: parser);
+  Future<T> patch<T>(
+    String path, {
+    Object? data,
+    Map<String, dynamic>? query,
+    required T Function(Object? json) parser,
+  }) {
+    return request<T>(
+      'PATCH',
+      path,
+      data: data,
+      query: query,
+      parser: parser,
+    );
   }
 
-  Future<T> delete<T>(String path, {Map<String, dynamic>? query, Map<String, dynamic>? headers, required T Function(Object? json) parser}) {
-    return request<T>('DELETE', path, query: query, headers: headers, parser: parser);
+  Future<T> delete<T>(
+    String path, {
+    Map<String, dynamic>? query,
+    Map<String, dynamic>? headers,
+    required T Function(Object? json) parser,
+  }) {
+    return request<T>(
+      'DELETE',
+      path,
+      query: query,
+      headers: headers,
+      parser: parser,
+    );
   }
 
-  Future<T> postForm<T>(String path, {required FormData formData, Map<String, dynamic>? query, required T Function(Object? json) parser}) async {
+  Future<T> postForm<T>(
+    String path, {
+    required FormData formData,
+    Map<String, dynamic>? query,
+    required T Function(Object? json) parser,
+  }) async {
     return request<T>(
       'POST',
       path,
@@ -91,17 +137,23 @@ class ApiClient {
       final status = response.statusCode ?? 0;
       final body = normalizeJsonKeys(response.data);
       if (status >= 400) {
-        throw ApiFailure(_extractMessage(body, 'Lỗi kết nối API.'), statusCode: status);
+        throw ApiFailure(
+          _friendlyMessage(status, body, 'Không thao tác được.'),
+          statusCode: status,
+        );
       }
 
       final map = body is Map ? asMap(body) : <String, dynamic>{};
-      final isApiResult = map.containsKey('isSuccess') || map.containsKey('statusCode') || map.containsKey('traceId');
+      final isApiResult = map.containsKey('isSuccess') ||
+          map.containsKey('statusCode') ||
+          map.containsKey('traceId');
       if (isApiResult) {
         final ok = asBool(map['isSuccess']);
         if (!ok) {
+          final resultStatus = asInt(map['statusCode'], status);
           throw ApiFailure(
-            _extractMessage(map, 'Thao tác thất bại.'),
-            statusCode: asInt(map['statusCode'], status),
+            _friendlyMessage(resultStatus, map, 'Không thao tác được.'),
+            statusCode: resultStatus,
             traceId: asString(map['traceId'], ''),
           );
         }
@@ -109,30 +161,74 @@ class ApiClient {
       }
 
       return parser(body);
-    } on DioException catch (error) {
-      throw ApiFailure(error.message ?? 'Không kết nối được server.');
+    } on DioException catch (_) {
+      throw const ApiFailure('Không kết nối được server.');
     }
   }
 
-  String _endpoint(String path) => path.startsWith('/') ? path.substring(1) : path;
+  String _endpoint(String path) =>
+      path.startsWith('/') ? path.substring(1) : path;
 
   Map<String, dynamic>? _cleanQuery(Map<String, dynamic>? query) {
     if (query == null) return null;
     final cleaned = <String, dynamic>{};
     query.forEach((key, value) {
-      if (value != null && value.toString().trim().isNotEmpty) cleaned[key] = value;
+      if (value != null && value.toString().trim().isNotEmpty) {
+        cleaned[key] = value;
+      }
     });
     return cleaned;
+  }
+
+  String _friendlyMessage(int statusCode, Object? body, String fallback) {
+    if (statusCode == 401) return 'Bạn cần đăng nhập lại.';
+    if (statusCode == 403) return 'Không có quyền thực hiện thao tác này.';
+    if (statusCode == 404) return 'Không tìm thấy dữ liệu.';
+    if (statusCode == 409) return 'Không thao tác được.';
+    if (statusCode >= 500) return 'Server đang bận, thử lại sau.';
+
+    return _sanitizeMessage(_extractMessage(body, fallback), fallback);
+  }
+
+  String _sanitizeMessage(String message, String fallback) {
+    final text = message.trim();
+    if (text.isEmpty) return fallback;
+
+    final lower = text.toLowerCase();
+    if (lower.contains('403') ||
+        lower.contains('forbidden') ||
+        lower.contains('workspace.forbidden') ||
+        lower.contains('task.forbidden') ||
+        lower.contains('comment.createforbidden') ||
+        lower.contains('không có quyền')) {
+      return 'Không có quyền thực hiện thao tác này.';
+    }
+
+    if (lower.contains('401') || lower.contains('unauthorized')) {
+      return 'Bạn cần đăng nhập lại.';
+    }
+
+    if (lower.contains('exception') ||
+        lower.contains('traceid') ||
+        lower.contains('status code')) {
+      return fallback;
+    }
+
+    return text;
   }
 
   String _extractMessage(Object? body, String fallback) {
     final map = asMap(body);
     final direct = map['message'] ?? map['title'] ?? map['error'];
-    if (direct != null && direct.toString().trim().isNotEmpty) return direct.toString();
+    if (direct != null && direct.toString().trim().isNotEmpty) {
+      return direct.toString();
+    }
 
     final error = asMap(map['error']);
     final details = error['details'];
-    if (details is List && details.isNotEmpty) return details.map((item) => item.toString()).join('\n');
+    if (details is List && details.isNotEmpty) {
+      return details.map((item) => item.toString()).join('\n');
+    }
 
     final code = asString(error['code']);
     return code.isEmpty ? fallback : code;

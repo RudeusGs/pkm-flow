@@ -87,6 +87,7 @@ class AuthController extends ChangeNotifier {
       user = await _repository.uploadAvatarImage(
         bytes: bytes,
         fileName: image.name,
+        contentType: image.mimeType,
       );
     });
   }

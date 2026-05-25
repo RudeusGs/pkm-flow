@@ -55,6 +55,7 @@ class _WorkspaceTrashPageState extends State<WorkspaceTrashPage> {
 
     _hasChanges = true;
     _showSnack('Đã khôi phục "${page.title}".');
+    Navigator.pop(context, true);
   }
 
   Future<void> _showPageActions(PageItem page) async {

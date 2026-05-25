@@ -123,6 +123,35 @@ class PageRepository {
     );
   }
 
+  Future<String> uploadImageFile({
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+    String purpose = 'page-image',
+  }) {
+    final safeFileName =
+        fileName.trim().isEmpty ? 'image.jpg' : fileName.trim();
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        bytes,
+        filename: safeFileName,
+        contentType: _safeMediaType(contentType, safeFileName),
+      ),
+      'purpose': purpose,
+    });
+
+    return _apiClient.postForm<String>(
+      'files/images',
+      formData: formData,
+      parser: (json) {
+        final map = asMap(json);
+        return asString(
+          map['publicUrl'] ?? map['url'] ?? map['webViewLink'] ?? map['storageFileId'],
+        );
+      },
+    );
+  }
+
   Future<PageItem> duplicatePage(PageItem page) {
     return _apiClient.post<PageItem>(
       'pages/${page.id}/duplicate',

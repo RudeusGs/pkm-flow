@@ -31,7 +31,7 @@ class _ProfilePageState extends State<ProfilePage> {
       SnackBar(
           content: Text(ok
               ? 'Avatar updated.'
-              : widget.authController.error ?? 'Could not update avatar.')),
+              : widget.authController.error ?? 'Không thao tác được.')),
     );
   }
 
@@ -80,7 +80,7 @@ class _ProfilePageState extends State<ProfilePage> {
         SnackBar(
             content: Text(saved
                 ? 'Profile saved.'
-                : widget.authController.error ?? 'Could not save profile.')),
+                : widget.authController.error ?? 'Không thao tác được.')),
       );
     }
   }
@@ -171,7 +171,7 @@ class _ProfilePageState extends State<ProfilePage> {
       SnackBar(
         content: Text(saved
             ? 'Password updated.'
-            : widget.authController.error ?? 'Could not update password.'),
+            : widget.authController.error ?? 'Không thao tác được.'),
       ),
     );
   }

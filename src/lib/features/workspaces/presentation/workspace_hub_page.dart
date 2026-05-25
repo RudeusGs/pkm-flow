@@ -25,6 +25,7 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
   late final PagesController _pages;
   final _search = TextEditingController();
   Timer? _searchDebounce;
+  String? _lastWorkspaceId;
 
   @override
   void initState() {
@@ -45,11 +46,19 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
     super.dispose();
   }
 
-  void _onWorkspaceChanged() => _loadPages();
+  void _onWorkspaceChanged() {
+    final id = widget.workspaceController.selected?.id;
+    if (id == null || id == _lastWorkspaceId) return;
+
+    _searchDebounce?.cancel();
+    _search.clear();
+    _loadPages(keyword: '');
+  }
 
   void _loadPages({String? keyword}) {
     final workspace = widget.workspaceController.selected;
     if (workspace != null) {
+      _lastWorkspaceId = workspace.id;
       _pages.loadPages(workspace.id, keyword: keyword ?? _search.text);
     }
   }
@@ -57,6 +66,7 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
   void _loadTrash() {
     final workspace = widget.workspaceController.selected;
     if (workspace != null) {
+      _lastWorkspaceId = workspace.id;
       _pages.loadTrash(workspace.id);
     }
   }
@@ -883,5 +893,3 @@ class _NoWorkspaceState extends StatelessWidget {
     );
   }
 }
-
-

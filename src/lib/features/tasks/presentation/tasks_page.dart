@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app/app_scope.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/json_utils.dart';
+import '../../../shared/widgets/app_avatar.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/notion_widgets.dart';
 import '../../pages/domain/page_item.dart';
@@ -28,7 +29,10 @@ class _TasksPageState extends State<TasksPage> {
     super.initState();
     final deps = AppScope.read(context);
     _controller = TasksController(
-        repository: deps.taskRepository, realtime: deps.realtime);
+      repository: deps.taskRepository,
+      workspaceRepository: deps.workspaceRepository,
+      realtime: deps.realtime,
+    );
     _reload();
   }
 
@@ -104,36 +108,49 @@ class _TasksPageState extends State<TasksPage> {
                   const SizedBox(width: 8),
                   IconButton.filled(
                     tooltip: 'Create task',
-                    onPressed: _showCreateTask,
+                    onPressed:
+                        workspace.canWriteEffective ? _showCreateTask : null,
                     icon: const Icon(Icons.add_rounded),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
+              if (!workspace.canWriteEffective)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: _InlineNotice(
+                    icon: Icons.lock_outline_rounded,
+                    message: 'Bạn chỉ có quyền xem workspace này.',
+                  ),
+                ),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   children: [
                     _FilterPill(
-                        label: 'All',
-                        value: 'all',
-                        selected: _filter,
-                        onSelected: _setFilter),
+                      label: 'All',
+                      value: 'all',
+                      selected: _filter,
+                      onSelected: _setFilter,
+                    ),
                     _FilterPill(
-                        label: 'Todo',
-                        value: 'todo',
-                        selected: _filter,
-                        onSelected: _setFilter),
+                      label: 'Todo',
+                      value: 'todo',
+                      selected: _filter,
+                      onSelected: _setFilter,
+                    ),
                     _FilterPill(
-                        label: 'Doing',
-                        value: 'doing',
-                        selected: _filter,
-                        onSelected: _setFilter),
+                      label: 'Doing',
+                      value: 'doing',
+                      selected: _filter,
+                      onSelected: _setFilter,
+                    ),
                     _FilterPill(
-                        label: 'Done',
-                        value: 'done',
-                        selected: _filter,
-                        onSelected: _setFilter),
+                      label: 'Done',
+                      value: 'done',
+                      selected: _filter,
+                      onSelected: _setFilter,
+                    ),
                   ],
                 ),
               ),
@@ -155,11 +172,13 @@ class _TasksPageState extends State<TasksPage> {
                   title: 'No tasks here',
                   message:
                       'Create a task or generate AI suggestions from this workspace.',
-                  action: NotionButton(
-                    label: 'Create task',
-                    icon: Icons.add_rounded,
-                    onPressed: _showCreateTask,
-                  ),
+                  action: workspace.canWriteEffective
+                      ? NotionButton(
+                          label: 'Create task',
+                          icon: Icons.add_rounded,
+                          onPressed: _showCreateTask,
+                        )
+                      : null,
                 )
               else
                 ...filtered.map(
@@ -167,6 +186,8 @@ class _TasksPageState extends State<TasksPage> {
                     padding: const EdgeInsets.only(bottom: 10),
                     child: _TaskTile(
                       task: task,
+                      members: _controller.members,
+                      onOpen: () => _openTaskDetails(task),
                       onStatus: (value) =>
                           _controller.changeStatus(task, value),
                     ),
@@ -189,15 +210,20 @@ class _TasksPageState extends State<TasksPage> {
     if (!mounted) return;
     if (pages.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Create a page before adding tasks.')),
+        const SnackBar(content: Text('Hãy tạo page trước khi tạo task.')),
       );
       return;
+    }
+
+    if (_controller.members.isEmpty) {
+      await _controller.reloadMembers();
     }
 
     final title = TextEditingController();
     final description = TextEditingController();
     var priority = 'medium';
     PageItem selectedPage = pages.first;
+    final selectedAssignees = <String>{};
 
     final ok = await showModalBottomSheet<bool>(
       context: context,
@@ -206,88 +232,134 @@ class _TasksPageState extends State<TasksPage> {
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) => Padding(
           padding: EdgeInsets.fromLTRB(
-              20, 0, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const BottomSheetHeader(
-                title: 'New task',
-                subtitle: 'Keep it tied to a page so it is easy to find later.',
-              ),
-              NotionTextField(
-                controller: title,
-                autofocus: true,
-                labelText: 'Task title',
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 10),
-              NotionTextField(
-                controller: description,
-                labelText: 'Description',
-                minLines: 2,
-                maxLines: 5,
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<PageItem>(
-                initialValue: selectedPage,
-                decoration: const InputDecoration(labelText: 'Related page'),
-                dropdownColor: AppColors.surface,
-                items: pages
-                    .map(
-                      (page) => DropdownMenuItem(
-                        value: page,
-                        child: Text(
-                          '${page.icon ?? '📄'} ${page.title}',
-                          overflow: TextOverflow.ellipsis,
+            20,
+            0,
+            20,
+            MediaQuery.viewInsetsOf(context).bottom + 24,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const BottomSheetHeader(
+                  title: 'New task',
+                  subtitle: 'Tạo task và gán người làm ngay từ đầu.',
+                ),
+                NotionTextField(
+                  controller: title,
+                  autofocus: true,
+                  labelText: 'Task title',
+                  textInputAction: TextInputAction.next,
+                ),
+                const SizedBox(height: 10),
+                NotionTextField(
+                  controller: description,
+                  labelText: 'Description',
+                  minLines: 2,
+                  maxLines: 5,
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<PageItem>(
+                  initialValue: selectedPage,
+                  decoration: const InputDecoration(labelText: 'Related page'),
+                  dropdownColor: AppColors.surface,
+                  items: pages
+                      .map(
+                        (page) => DropdownMenuItem(
+                          value: page,
+                          child: Text(
+                            '${page.icon ?? '📄'} ${page.title}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value != null) setSheetState(() => selectedPage = value);
-                },
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  NotionPill(
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setSheetState(() => selectedPage = value);
+                    }
+                  },
+                ),
+                const SizedBox(height: 14),
+                const _SheetLabel('Priority'),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    NotionPill(
                       label: 'Low',
                       selected: priority == 'low',
-                      onTap: () => setSheetState(() => priority = 'low')),
-                  NotionPill(
+                      onTap: () => setSheetState(() => priority = 'low'),
+                    ),
+                    NotionPill(
                       label: 'Medium',
                       selected: priority == 'medium',
-                      onTap: () => setSheetState(() => priority = 'medium')),
-                  NotionPill(
+                      onTap: () => setSheetState(() => priority = 'medium'),
+                    ),
+                    NotionPill(
                       label: 'High',
                       selected: priority == 'high',
-                      onTap: () => setSheetState(() => priority = 'high')),
-                ],
-              ),
-              const SizedBox(height: 18),
-              NotionButton(
-                label: 'Create task',
-                icon: Icons.add_rounded,
-                expanded: true,
-                onPressed: () => Navigator.pop(context, true),
-              ),
-            ],
+                      onTap: () => setSheetState(() => priority = 'high'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _AssigneePicker(
+                  members: _controller.members,
+                  selectedIds: selectedAssignees,
+                  enabled: workspace.canManageMembersEffective,
+                  onToggle: (member) {
+                    setSheetState(() {
+                      if (!selectedAssignees.add(member.userId)) {
+                        selectedAssignees.remove(member.userId);
+                      }
+                    });
+                  },
+                ),
+                const SizedBox(height: 18),
+                NotionButton(
+                  label: 'Create task',
+                  icon: Icons.add_rounded,
+                  expanded: true,
+                  onPressed: () => Navigator.pop(context, true),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
 
     if (ok == true && title.text.trim().isNotEmpty) {
-      await _controller.createTask(
-        pageId: selectedPage.id,
-        title: title.text.trim(),
-        description: description.text.trim(),
-        priority: priority,
-      );
+      try {
+        await _controller.createTask(
+          pageId: selectedPage.id,
+          title: title.text.trim(),
+          description: description.text.trim(),
+          priority: priority,
+          assigneeUserIds: selectedAssignees.toList(),
+        );
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_controller.error ?? 'Không thao tác được.')),
+        );
+      }
     }
+  }
+
+  Future<void> _openTaskDetails(WorkTask task) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _TaskDetailSheet(
+        task: task,
+        controller: _controller,
+        canAssign: widget.workspace?.canManageMembersEffective == true,
+      ),
+    );
   }
 
   Future<void> _generateSuggestions() async {
@@ -296,9 +368,9 @@ class _TasksPageState extends State<TasksPage> {
 
     final message = ok
         ? (_controller.recommendations.isEmpty
-            ? 'No AI suggestions for now.'
-            : 'AI suggestions refreshed.')
-        : _controller.error ?? 'Could not generate AI suggestions.';
+            ? 'Chưa có gợi ý AI phù hợp.'
+            : 'Đã làm mới gợi ý AI.')
+        : _controller.error ?? 'Không thao tác được.';
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
@@ -503,7 +575,7 @@ class _TasksPageState extends State<TasksPage> {
       SnackBar(
         content: Text(ok
             ? 'AI settings saved.'
-            : _controller.error ?? 'Could not save AI settings.'),
+            : _controller.error ?? 'Không thao tác được.'),
       ),
     );
   }
@@ -575,7 +647,7 @@ class _TasksPageState extends State<TasksPage> {
             'complete' => 'Task completed.',
             _ => 'Recommendation updated.',
           }
-        : _controller.error ?? 'Could not update recommendation.';
+        : _controller.error ?? 'Không thao tác được.';
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
@@ -600,6 +672,696 @@ class _TasksPageState extends State<TasksPage> {
         6 => 'Sat',
         _ => '$day',
       };
+}
+
+class _TaskDetailSheet extends StatefulWidget {
+  const _TaskDetailSheet({
+    required this.task,
+    required this.controller,
+    required this.canAssign,
+  });
+
+  final WorkTask task;
+  final TasksController controller;
+  final bool canAssign;
+
+  @override
+  State<_TaskDetailSheet> createState() => _TaskDetailSheetState();
+}
+
+class _TaskDetailSheetState extends State<_TaskDetailSheet> {
+  final TextEditingController _comment = TextEditingController();
+  String? _replyToCommentId;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.loadComments(widget.task);
+  }
+
+  @override
+  void dispose() {
+    _comment.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        final task = widget.controller.taskById(widget.task.id) ?? widget.task;
+        final comments = widget.controller.commentsFor(task.id);
+        final replyTo = _replyToCommentId == null
+            ? null
+            : _findComment(comments, _replyToCommentId!);
+        final bottom = MediaQuery.viewInsetsOf(context).bottom;
+
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(20, 0, 20, bottom + 18),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * .88,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.max,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  BottomSheetHeader(
+                    title: task.title,
+                    subtitle: 'Bình luận realtime · phân người làm rõ ràng',
+                  ),
+                  Expanded(
+                    child: ListView(
+                      padding: EdgeInsets.zero,
+                      children: [
+                        if (task.description?.trim().isNotEmpty == true) ...[
+                          Text(
+                            task.description!.trim(),
+                            style: const TextStyle(
+                              color: AppColors.muted,
+                              height: 1.4,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _MetaChip(
+                              label: _statusLabel(task.status),
+                              icon: Icons.flag_outlined,
+                            ),
+                            _MetaChip(
+                              label: _priorityLabel(task.priority),
+                              icon: Icons.priority_high_rounded,
+                            ),
+                            if (task.dueDate != null)
+                              _MetaChip(
+                                label: shortDate(task.dueDate),
+                                icon: Icons.event_outlined,
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: _SheetLabel('Assignees'),
+                            ),
+                            if (!widget.canAssign)
+                              const Text(
+                                'Không có quyền gán',
+                                style: TextStyle(
+                                  color: AppColors.subtle,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                          ],
+                        ),
+                        _AssigneePicker(
+                          members: widget.controller.members,
+                          selectedIds: task.assigneeUserIds.toSet(),
+                          enabled: widget.canAssign && !widget.controller.isAssigning,
+                          onToggle: (member) async {
+                            final ok = await widget.controller.toggleAssignee(
+                              task,
+                              member,
+                            );
+                            if (!ok && mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(widget.controller.error ??
+                                      'Không thao tác được.'),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Comments',
+                                style: TextStyle(
+                                  color: AppColors.ink,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            if (widget.controller.isLoadingComments(task.id))
+                              const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            else
+                              IconButton(
+                                tooltip: 'Refresh comments',
+                                onPressed: () =>
+                                    widget.controller.loadComments(task),
+                                icon: const Icon(Icons.refresh_rounded),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        if (comments.isEmpty &&
+                            !widget.controller.isLoadingComments(task.id))
+                          const _InlineNotice(
+                            icon: Icons.chat_bubble_outline_rounded,
+                            message:
+                                'Chưa có bình luận. Bắn phát đầu cho nóng workspace nào.',
+                          )
+                        else
+                          _CommentThreadList(
+                            comments: comments,
+                            memberFor: widget.controller.memberById,
+                            onReply: (comment) {
+                              setState(() => _replyToCommentId = comment.id);
+                            },
+                          ),
+                        const SizedBox(height: 12),
+                      ],
+                    ),
+                  ),
+                  if (replyTo != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _ReplyBanner(
+                        name: _commentAuthorName(replyTo, widget.controller),
+                        onCancel: () => setState(() => _replyToCommentId = null),
+                      ),
+                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _comment,
+                          minLines: 1,
+                          maxLines: 4,
+                          textInputAction: TextInputAction.newline,
+                          decoration: InputDecoration(
+                            hintText: replyTo == null
+                                ? 'Viết bình luận...'
+                                : 'Trả lời bình luận...',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      IconButton.filled(
+                        tooltip: 'Send comment',
+                        onPressed: widget.controller.isSendingComment(task.id)
+                            ? null
+                            : () => _sendComment(task),
+                        icon: widget.controller.isSendingComment(task.id)
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.send_rounded),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _sendComment(WorkTask task) async {
+    final ok = await widget.controller.createComment(
+      task,
+      content: _comment.text,
+      parentId: _replyToCommentId,
+    );
+
+    if (ok) {
+      _comment.clear();
+      setState(() => _replyToCommentId = null);
+      return;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(widget.controller.error ?? 'Không thao tác được.')),
+    );
+  }
+}
+
+class _CommentThreadList extends StatelessWidget {
+  const _CommentThreadList({
+    required this.comments,
+    required this.memberFor,
+    required this.onReply,
+  });
+
+  final List<TaskComment> comments;
+  final WorkspaceMember? Function(String userId) memberFor;
+  final ValueChanged<TaskComment> onReply;
+
+  @override
+  Widget build(BuildContext context) {
+    final roots = comments
+        .where((comment) => comment.parentId == null || comment.parentId!.isEmpty)
+        .toList();
+    final repliesByParent = <String, List<TaskComment>>{};
+    for (final comment in comments.where((item) =>
+        item.parentId != null && item.parentId!.trim().isNotEmpty)) {
+      repliesByParent.putIfAbsent(comment.parentId!, () => <TaskComment>[])
+          .add(comment);
+    }
+
+    return Column(
+      children: [
+        for (final root in roots)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _CommentBubble(
+              comment: root,
+              memberFor: memberFor,
+              repliesByParent: repliesByParent,
+              onReply: onReply,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CommentBubble extends StatelessWidget {
+  const _CommentBubble({
+    required this.comment,
+    required this.memberFor,
+    required this.repliesByParent,
+    required this.onReply,
+  });
+
+  final TaskComment comment;
+  final WorkspaceMember? Function(String userId) memberFor;
+  final Map<String, List<TaskComment>> repliesByParent;
+  final ValueChanged<TaskComment> onReply;
+
+  @override
+  Widget build(BuildContext context) {
+    final member = memberFor(comment.userId);
+    final name = _memberName(member);
+    final replies = repliesByParent[comment.id] ?? const <TaskComment>[];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        NotionCard(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppAvatar(
+                name: name,
+                imageUrl: member?.avatarUrl,
+                radius: 17,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.ink,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        if (comment.createdDate?.isNotEmpty == true)
+                          Text(
+                            shortDate(comment.createdDate),
+                            style: const TextStyle(
+                              color: AppColors.subtle,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      comment.isDeleted
+                          ? 'Bình luận đã bị xóa.'
+                          : comment.content,
+                      style: TextStyle(
+                        color:
+                            comment.isDeleted ? AppColors.subtle : AppColors.ink,
+                        height: 1.35,
+                        fontStyle:
+                            comment.isDeleted ? FontStyle.italic : FontStyle.normal,
+                      ),
+                    ),
+                    if (!comment.isDeleted) ...[
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => onReply(comment),
+                          icon: const Icon(Icons.reply_rounded, size: 16),
+                          label: const Text('Reply'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (replies.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 28),
+            child: DecoratedBox(
+              decoration: const BoxDecoration(
+                border: Border(left: BorderSide(color: AppColors.line)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Column(
+                  children: [
+                    for (final reply in replies)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _CommentBubble(
+                          comment: reply,
+                          memberFor: memberFor,
+                          repliesByParent: repliesByParent,
+                          onReply: onReply,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ReplyBanner extends StatelessWidget {
+  const _ReplyBanner({required this.name, required this.onCancel});
+
+  final String name;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+      decoration: BoxDecoration(
+        color: AppColors.hover,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.reply_rounded, size: 18, color: AppColors.muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Replying to $name',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Cancel reply',
+            onPressed: onCancel,
+            icon: const Icon(Icons.close_rounded, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AssigneePicker extends StatelessWidget {
+  const _AssigneePicker({
+    required this.members,
+    required this.selectedIds,
+    required this.enabled,
+    required this.onToggle,
+  });
+
+  final List<WorkspaceMember> members;
+  final Set<String> selectedIds;
+  final bool enabled;
+  final ValueChanged<WorkspaceMember> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final assignable = members.where((member) => member.userId.isNotEmpty).toList();
+    if (assignable.isEmpty) {
+      return const _InlineNotice(
+        icon: Icons.person_search_rounded,
+        message: 'Chưa tải được danh sách member trong workspace.',
+      );
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final member in assignable)
+          FilterChip(
+            selected: selectedIds.contains(member.userId),
+            onSelected: enabled ? (_) => onToggle(member) : null,
+            avatar: AppAvatar(
+              name: _memberName(member),
+              imageUrl: member.avatarUrl,
+              radius: 11,
+            ),
+            label: Text(_memberName(member)),
+          ),
+      ],
+    );
+  }
+}
+
+class _TaskTile extends StatelessWidget {
+  const _TaskTile({
+    required this.task,
+    required this.members,
+    required this.onOpen,
+    required this.onStatus,
+  });
+
+  final WorkTask task;
+  final List<WorkspaceMember> members;
+  final VoidCallback onOpen;
+  final ValueChanged<String> onStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDone = task.status == 'done';
+    final description = task.description?.trim();
+
+    return NotionCard(
+      onTap: onOpen,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: () => _showStatusSheet(context),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(
+                    isDone
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    color: isDone ? AppColors.success : AppColors.muted,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  task.title,
+                  style: TextStyle(
+                    color: AppColors.ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    decoration: isDone ? TextDecoration.lineThrough : null,
+                    decorationColor: AppColors.muted,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Task actions',
+                onPressed: () => _showStatusSheet(context),
+                icon: const Icon(
+                  Icons.more_horiz_rounded,
+                  color: AppColors.muted,
+                ),
+              ),
+            ],
+          ),
+          if (description?.isNotEmpty == true) ...[
+            const SizedBox(height: 6),
+            Text(
+              description!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.muted, height: 1.35),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _MetaChip(
+                label: _statusLabel(task.status),
+                icon: Icons.flag_outlined,
+              ),
+              _MetaChip(
+                label: _priorityLabel(task.priority),
+                icon: Icons.priority_high_rounded,
+              ),
+              if (task.dueDate != null)
+                _MetaChip(
+                  label: shortDate(task.dueDate),
+                  icon: Icons.event_outlined,
+                ),
+              if (task.pageId?.isNotEmpty == true)
+                const _MetaChip(
+                  label: 'Page linked',
+                  icon: Icons.description_outlined,
+                ),
+              if (task.assigneeUserIds.isNotEmpty)
+                _AssigneePreview(
+                  userIds: task.assigneeUserIds,
+                  members: members,
+                ),
+              const _MetaChip(
+                label: 'Comments',
+                icon: Icons.mode_comment_outlined,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showStatusSheet(BuildContext context) async {
+    final next = await NotionBottomSheet.show<String>(
+      context: context,
+      title: 'Task status',
+      subtitle: task.title,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          NotionActionRow(
+            icon: Icons.radio_button_unchecked_rounded,
+            title: 'Todo',
+            onTap: () => Navigator.pop(context, 'todo'),
+          ),
+          NotionActionRow(
+            icon: Icons.pending_actions_rounded,
+            title: 'Doing',
+            onTap: () => Navigator.pop(context, 'doing'),
+          ),
+          NotionActionRow(
+            icon: Icons.check_circle_rounded,
+            title: 'Done',
+            onTap: () => Navigator.pop(context, 'done'),
+          ),
+        ],
+      ),
+    );
+    if (next != null && next != task.status) onStatus(next);
+  }
+}
+
+class _AssigneePreview extends StatelessWidget {
+  const _AssigneePreview({required this.userIds, required this.members});
+
+  final List<String> userIds;
+  final List<WorkspaceMember> members;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = userIds.take(3).toList();
+    final names = shown.map((id) => _memberName(_memberById(members, id))).toList();
+
+    return Container(
+      constraints: const BoxConstraints(minHeight: 30),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.hover,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: shown.length <= 1 ? 22 : 22.0 + (shown.length - 1) * 14,
+            height: 22,
+            child: Stack(
+              children: [
+                for (var i = 0; i < shown.length; i++)
+                  Positioned(
+                    left: i * 14,
+                    child: AppAvatar(
+                      name: names[i],
+                      imageUrl: _memberById(members, shown[i])?.avatarUrl,
+                      radius: 11,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            userIds.length > 3 ? '${userIds.length} assignees' : names.join(', '),
+            style: const TextStyle(
+              color: AppColors.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _FilterPill extends StatelessWidget {
@@ -942,6 +1704,36 @@ class _SuggestionTile extends StatelessWidget {
       };
 }
 
+class _InlineNotice extends StatelessWidget {
+  const _InlineNotice({required this.icon, required this.message});
+
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return NotionCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Icon(icon, color: AppColors.muted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontWeight: FontWeight.w800,
+                height: 1.3,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SheetLabel extends StatelessWidget {
   const _SheetLabel(this.label);
 
@@ -1022,118 +1814,6 @@ class _PreferenceSlider extends StatelessWidget {
   }
 }
 
-class _TaskTile extends StatelessWidget {
-  const _TaskTile({required this.task, required this.onStatus});
-
-  final WorkTask task;
-  final ValueChanged<String> onStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDone = task.status == 'done';
-    final description = task.description?.trim();
-    return NotionCard(
-      onTap: () => _showStatusSheet(context),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                isDone
-                    ? Icons.check_circle_rounded
-                    : Icons.radio_button_unchecked_rounded,
-                color: isDone ? AppColors.success : AppColors.muted,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  task.title,
-                  style: TextStyle(
-                    color: AppColors.ink,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    decoration: isDone ? TextDecoration.lineThrough : null,
-                    decorationColor: AppColors.muted,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Change status',
-                onPressed: () => _showStatusSheet(context),
-                icon: const Icon(Icons.more_horiz_rounded,
-                    color: AppColors.muted),
-              ),
-            ],
-          ),
-          if (description?.isNotEmpty == true) ...[
-            const SizedBox(height: 6),
-            Text(
-              description!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppColors.muted, height: 1.35),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _MetaChip(
-                  label: _statusLabel(task.status), icon: Icons.flag_outlined),
-              _MetaChip(
-                  label: task.priority, icon: Icons.priority_high_rounded),
-              if (task.dueDate != null)
-                _MetaChip(
-                    label: shortDate(task.dueDate), icon: Icons.event_outlined),
-              if (task.pageId?.isNotEmpty == true)
-                const _MetaChip(
-                    label: 'Page linked', icon: Icons.description_outlined),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showStatusSheet(BuildContext context) async {
-    final next = await NotionBottomSheet.show<String>(
-      context: context,
-      title: 'Task status',
-      subtitle: task.title,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          NotionActionRow(
-            icon: Icons.radio_button_unchecked_rounded,
-            title: 'Todo',
-            onTap: () => Navigator.pop(context, 'todo'),
-          ),
-          NotionActionRow(
-            icon: Icons.pending_actions_rounded,
-            title: 'Doing',
-            onTap: () => Navigator.pop(context, 'doing'),
-          ),
-          NotionActionRow(
-            icon: Icons.check_circle_rounded,
-            title: 'Done',
-            onTap: () => Navigator.pop(context, 'done'),
-          ),
-        ],
-      ),
-    );
-    if (next != null && next != task.status) onStatus(next);
-  }
-
-  String _statusLabel(String value) => switch (value) {
-        'doing' => 'Doing',
-        'done' => 'Done',
-        _ => 'Todo',
-      };
-}
-
 class _MetaChip extends StatelessWidget {
   const _MetaChip({required this.label, required this.icon});
 
@@ -1158,12 +1838,53 @@ class _MetaChip extends StatelessWidget {
           Text(
             label,
             style: const TextStyle(
-                color: AppColors.muted,
-                fontSize: 12,
-                fontWeight: FontWeight.w800),
+              color: AppColors.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ],
       ),
     );
   }
+}
+
+WorkspaceMember? _memberById(List<WorkspaceMember> members, String userId) {
+  final clean = userId.trim().toLowerCase();
+  if (clean.isEmpty) return null;
+  for (final member in members) {
+    if (member.userId.toLowerCase() == clean) return member;
+  }
+  return null;
+}
+
+String _memberName(WorkspaceMember? member) {
+  if (member == null) return 'Thành viên';
+  final name = member.fullName.trim().isNotEmpty
+      ? member.fullName.trim()
+      : member.userName.trim();
+  return name.isEmpty ? 'Thành viên' : name;
+}
+
+String _commentAuthorName(TaskComment comment, TasksController controller) {
+  return _memberName(controller.memberById(comment.userId));
+}
+
+String _statusLabel(String value) => switch (value) {
+      'doing' => 'Doing',
+      'done' => 'Done',
+      _ => 'Todo',
+    };
+
+String _priorityLabel(String value) => switch (value) {
+      'low' => 'Low',
+      'high' => 'High',
+      _ => 'Medium',
+    };
+
+TaskComment? _findComment(List<TaskComment> comments, String id) {
+  for (final comment in comments) {
+    if (comment.id == id) return comment;
+  }
+  return null;
 }

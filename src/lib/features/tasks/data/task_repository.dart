@@ -7,8 +7,11 @@ class TaskRepository {
 
   final ApiClient _apiClient;
 
-  Future<List<WorkTask>> workspaceTasks(String workspaceId,
-      {String? status, String? keyword}) {
+  Future<List<WorkTask>> workspaceTasks(
+    String workspaceId, {
+    String? status,
+    String? keyword,
+  }) {
     return _apiClient.get<List<WorkTask>>(
       'workspaces/$workspaceId/tasks',
       query: {
@@ -16,24 +19,35 @@ class TaskRepository {
         'keyword': keyword,
         'includeCompleted': true,
         'pageNumber': 1,
-        'pageSize': 100
+        'pageSize': 100,
       },
       parser: (json) => parsePagedItems(json, WorkTask.fromJson),
     );
   }
 
-  Future<WorkTask> createTask(String pageId,
-      {required String title,
-      String? description,
-      String priority = 'medium',
-      String? dueDate}) {
+  Future<WorkTask> task(String taskId) {
+    return _apiClient.get<WorkTask>(
+      'tasks/$taskId',
+      parser: (json) => WorkTask.fromJson(asMap(json)),
+    );
+  }
+
+  Future<WorkTask> createTask(
+    String pageId, {
+    required String title,
+    String? description,
+    String priority = 'medium',
+    String? dueDate,
+    List<String> assigneeUserIds = const <String>[],
+  }) {
     return _apiClient.post<WorkTask>(
       'pages/$pageId/tasks',
       data: {
         'title': title,
         'description': description,
         'priority': priority,
-        'dueDate': dueDate
+        'dueDate': dueDate,
+        'assigneeUserIds': assigneeUserIds,
       },
       parser: (json) => WorkTask.fromJson(asMap(json)),
     );
@@ -44,6 +58,74 @@ class TaskRepository {
       'tasks/$taskId:change-status',
       data: {'status': status},
       parser: (json) => WorkTask.fromJson(asMap(json)),
+    );
+  }
+
+  Future<WorkTask> assignTask(String taskId, String userId) {
+    return _apiClient.post<WorkTask>(
+      'tasks/$taskId/assignees',
+      data: {'userId': userId},
+      parser: (json) => WorkTask.fromJson(asMap(json)),
+    );
+  }
+
+  Future<WorkTask> unassignTask(String taskId, String userId) {
+    return _apiClient.delete<WorkTask>(
+      'tasks/$taskId/assignees/$userId',
+      parser: (json) => WorkTask.fromJson(asMap(json)),
+    );
+  }
+
+  Future<List<TaskComment>> taskComments(
+    String taskId, {
+    bool includeDeleted = true,
+  }) {
+    return _apiClient.get<List<TaskComment>>(
+      'tasks/$taskId/comments',
+      query: {
+        'pageNumber': 1,
+        'pageSize': 100,
+        'includeDeleted': includeDeleted,
+      },
+      parser: (json) => parsePagedItems(json, TaskComment.fromJson),
+    );
+  }
+
+  Future<TaskComment> createComment(
+    String taskId, {
+    required String content,
+    String? parentId,
+  }) {
+    return _apiClient.post<TaskComment>(
+      'tasks/$taskId/comments',
+      data: {
+        'content': content,
+        if (parentId != null && parentId.trim().isNotEmpty)
+          'parentId': parentId.trim(),
+      },
+      parser: (json) => TaskComment.fromJson(asMap(json)),
+    );
+  }
+
+  Future<TaskComment> updateComment(String commentId, String content) {
+    return _apiClient.patch<TaskComment>(
+      'task-comments/$commentId',
+      data: {'content': content},
+      parser: (json) => TaskComment.fromJson(asMap(json)),
+    );
+  }
+
+  Future<TaskComment> deleteComment(String commentId) {
+    return _apiClient.delete<TaskComment>(
+      'task-comments/$commentId',
+      parser: (json) => TaskComment.fromJson(asMap(json)),
+    );
+  }
+
+  Future<TaskComment> restoreComment(String commentId) {
+    return _apiClient.post<TaskComment>(
+      'task-comments/$commentId:restore',
+      parser: (json) => TaskComment.fromJson(asMap(json)),
     );
   }
 
@@ -58,7 +140,7 @@ class TaskRepository {
         'workspaceId': workspaceId,
         'status': status,
         'pageNumber': 1,
-        'pageSize': pageSize
+        'pageSize': pageSize,
       },
       parser: (json) => parsePagedItems(json, TaskRecommendation.fromJson),
     );
@@ -83,8 +165,11 @@ class TaskRepository {
     return items;
   }
 
-  Future<List<TaskRecommendation>> generateRecommendations(String workspaceId,
-      {String? pageId, bool force = true}) {
+  Future<List<TaskRecommendation>> generateRecommendations(
+    String workspaceId, {
+    String? pageId,
+    bool force = true,
+  }) {
     return _apiClient.post<List<TaskRecommendation>>(
       'workspaces/$workspaceId/task-recommendations:generate',
       data: {'pageId': pageId, 'force': force},

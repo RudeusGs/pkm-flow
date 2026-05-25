@@ -219,6 +219,8 @@ class WorkspaceController extends ChangeNotifier {
       }
     }
 
+    // Một số response cũ không có isCurrentUser. Khi workspace DTO đã nói user
+    // hiện tại là owner thì lấy dòng owner để đồng bộ lại quyền UI.
     if (currentMember == null && workspace.isOwner) {
       for (final member in members) {
         if (member.isOwner) {
@@ -228,10 +230,13 @@ class WorkspaceController extends ChangeNotifier {
       }
     }
 
-    if (currentMember == null) return;
+    final rawRole = currentMember == null
+        ? workspace.normalizedRole
+        : (currentMember.isOwner
+            ? 'owner'
+            : normalizeWorkspaceRole(currentMember.role));
 
-    final role =
-        currentMember.isOwner ? 'owner' : normalizeWorkspaceRole(currentMember.role);
+    final role = normalizeWorkspaceRole(rawRole);
     if (role.isEmpty) return;
 
     final updated = workspace.copyWith(
@@ -288,6 +293,7 @@ class WorkspaceController extends ChangeNotifier {
       members = members
           .map((item) => item.userId == updated.userId ? updated : item)
           .toList();
+      _syncSelectedFromCurrentMember();
     });
   }
 
@@ -311,12 +317,33 @@ class WorkspaceController extends ChangeNotifier {
     try {
       await action();
     } catch (err) {
-      error = err.toString();
+      error = _friendlyError(err);
       rethrow;
     } finally {
       isBusy = false;
       notifyListeners();
     }
+  }
+
+  String _friendlyError(Object error) {
+    final text = error.toString();
+    final lower = text.toLowerCase();
+
+    if (lower.contains('403') ||
+        lower.contains('forbidden') ||
+        lower.contains('không có quyền')) {
+      return 'Không có quyền thực hiện thao tác này.';
+    }
+
+    if (lower.contains('401') || lower.contains('unauthorized')) {
+      return 'Bạn cần đăng nhập lại.';
+    }
+
+    if (lower.contains('404') || lower.contains('not found')) {
+      return 'Không tìm thấy dữ liệu.';
+    }
+
+    return 'Không thao tác được.';
   }
 
   void _bindRealtime() {

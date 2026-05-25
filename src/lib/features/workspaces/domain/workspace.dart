@@ -23,7 +23,21 @@ class Workspace {
   final bool canManageMembers;
   final bool canDeleteWorkspace;
 
-  bool get isOwner => currentUserRole == 'owner';
+  String get normalizedRole => normalizeWorkspaceRole(currentUserRole);
+
+  bool get isOwner => normalizedRole == 'owner';
+
+  bool get canWriteEffective =>
+      canWrite || _roleCanWrite(normalizedRole);
+
+  bool get canManageMembersEffective =>
+      canManageMembers || _roleCanManageMembers(normalizedRole);
+
+  bool get canManageSettingsEffective =>
+      canManageMembersEffective || isOwner;
+
+  bool get canDeleteWorkspaceEffective =>
+      canDeleteWorkspace || _roleCanDeleteWorkspace(normalizedRole);
 
   Workspace copyWith({
     String? id,
@@ -42,7 +56,8 @@ class Workspace {
       description: description ?? this.description,
       visibility: visibility ?? this.visibility,
       ownerId: ownerId ?? this.ownerId,
-      currentUserRole: currentUserRole ?? this.currentUserRole,
+      currentUserRole:
+          currentUserRole == null ? this.currentUserRole : normalizeWorkspaceRole(currentUserRole),
       canWrite: canWrite ?? this.canWrite,
       canManageMembers: canManageMembers ?? this.canManageMembers,
       canDeleteWorkspace: canDeleteWorkspace ?? this.canDeleteWorkspace,
@@ -50,22 +65,30 @@ class Workspace {
   }
 
   factory Workspace.fromJson(JsonMap json) {
-    final role = normalizeWorkspaceRole(json['currentUserRole'] ?? json['role']);
+    final role = normalizeWorkspaceRole(
+      json['currentUserRole'] ??
+          json['role'] ??
+          json['memberRole'] ??
+          json['workspaceRole'],
+    );
+
+    final isOwner = asBool(json['isOwner']) || role == 'owner';
+
     return Workspace(
       id: asString(json['id']),
       name: asString(json['name'], 'Untitled workspace'),
       description: json['description']?.toString(),
       visibility: asString(json['visibility'], 'private').toLowerCase(),
       ownerId: asString(json['ownerId']),
-      currentUserRole: role,
-      canWrite: asBool(json['canWrite'], _roleCanWrite(role)),
+      currentUserRole: isOwner ? 'owner' : role,
+      canWrite: asBool(json['canWrite'], _roleCanWrite(role) || isOwner),
       canManageMembers: asBool(
-        json['canManageMembers'],
-        _roleCanManageMembers(role),
+        json['canManageMembers'] ?? json['canManageWorkspaceMembers'],
+        _roleCanManageMembers(role) || isOwner,
       ),
       canDeleteWorkspace: asBool(
         json['canDeleteWorkspace'],
-        _roleCanDeleteWorkspace(role),
+        _roleCanDeleteWorkspace(role) || isOwner,
       ),
     );
   }
@@ -92,33 +115,45 @@ class WorkspaceMember {
   final bool isOwner;
   final bool isCurrentUser;
 
+  bool get canBeManaged => !isOwner && !isCurrentUser;
+
   factory WorkspaceMember.fromJson(JsonMap json) {
-    final role = normalizeWorkspaceRole(json['role']);
+    final role = normalizeWorkspaceRole(
+      json['role'] ?? json['currentUserRole'] ?? json['memberRole'],
+    );
+    final isOwner = asBool(json['isOwner'], role == 'owner');
+
     return WorkspaceMember(
-        userId: asString(json['userId']),
-        userName: asString(json['userName']),
-        fullName: asString(
-          json['fullName'],
-          asString(json['userName'], 'Member'),
-        ),
-        email: asString(json['email']),
-        avatarUrl: json['avatarUrl']?.toString(),
-        role: role,
-        isOwner: asBool(json['isOwner'], role == 'owner'),
-        isCurrentUser: asBool(json['isCurrentUser']),
-      );
+      userId: asString(json['userId'] ?? json['id']),
+      userName: asString(json['userName']),
+      fullName: asString(
+        json['fullName'] ?? json['displayName'] ?? json['name'],
+        asString(json['userName'], 'Member'),
+      ),
+      email: asString(json['email']),
+      avatarUrl: json['avatarUrl']?.toString(),
+      role: isOwner ? 'owner' : role,
+      isOwner: isOwner,
+      isCurrentUser: asBool(json['isCurrentUser'] ?? json['isMe']),
+    );
   }
 }
 
 String normalizeWorkspaceRole(Object? value) {
   final raw = value?.toString().trim().toLowerCase() ?? '';
-  final normalized = raw.replaceAll('-', '_').replaceAll(' ', '_');
+  if (raw.isEmpty) return '';
+
+  final normalized = raw
+      .replaceAll('-', '_')
+      .replaceAll(' ', '_')
+      .replaceAll('.', '_');
+
   return switch (normalized) {
-    'owner' || 'workspace_role_owner' || 'chu_so_huu' => 'owner',
-    'manager' || 'admin' => 'manager',
-    'member' => 'member',
-    'viewer' || 'view' => 'viewer',
-    _ => raw,
+    '1' || 'owner' || 'workspace_role_owner' || 'workspacerole_owner' || 'chu_so_huu' => 'owner',
+    '2' || 'manager' || 'admin' || 'administrator' || 'workspace_role_manager' || 'workspacerole_manager' => 'manager',
+    '3' || 'member' || 'editor' || 'workspace_role_member' || 'workspacerole_member' => 'member',
+    '4' || 'viewer' || 'view' || 'readonly' || 'read_only' || 'workspace_role_viewer' || 'workspacerole_viewer' => 'viewer',
+    _ => normalized,
   };
 }
 
