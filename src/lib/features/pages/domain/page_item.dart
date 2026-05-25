@@ -9,6 +9,7 @@ class PageItem {
     this.icon,
     this.coverImage,
     this.isArchived = false,
+    this.isFavorite = false,
     this.currentRevision = 0,
   });
 
@@ -19,6 +20,7 @@ class PageItem {
   final String? icon;
   final String? coverImage;
   final bool isArchived;
+  final bool isFavorite;
   final int currentRevision;
 
   factory PageItem.fromJson(JsonMap json) => PageItem(
@@ -29,17 +31,27 @@ class PageItem {
         icon: json['icon']?.toString(),
         coverImage: json['coverImage']?.toString(),
         isArchived: asBool(json['isArchived']),
+        isFavorite: asBool(json['isFavorite']),
         currentRevision: asInt(json['currentRevision']),
       );
 
-  PageItem copyWith({String? title, String? icon, int? currentRevision}) => PageItem(
+  PageItem copyWith({
+    String? title,
+    String? icon,
+    String? coverImage,
+    bool? isArchived,
+    bool? isFavorite,
+    int? currentRevision,
+  }) =>
+      PageItem(
         id: id,
         workspaceId: workspaceId,
         title: title ?? this.title,
         parentPageId: parentPageId,
         icon: icon ?? this.icon,
-        coverImage: coverImage,
-        isArchived: isArchived,
+        coverImage: coverImage ?? this.coverImage,
+        isArchived: isArchived ?? this.isArchived,
+        isFavorite: isFavorite ?? this.isFavorite,
         currentRevision: currentRevision ?? this.currentRevision,
       );
 }

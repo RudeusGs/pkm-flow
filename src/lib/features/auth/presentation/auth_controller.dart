@@ -91,6 +91,18 @@ class AuthController extends ChangeNotifier {
     });
   }
 
+  Future<bool> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    return _run(() async {
+      await _repository.changePassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+    });
+  }
+
   Future<void> logout() async {
     await _repository.logout();
     await _realtime.stop();

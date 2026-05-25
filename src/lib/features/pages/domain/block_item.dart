@@ -9,6 +9,7 @@ class BlockItem {
     this.propsJson,
     this.parentBlockId,
     this.orderKey = '',
+    this.schemaVersion = 1,
   });
 
   final String id;
@@ -18,6 +19,7 @@ class BlockItem {
   final String? propsJson;
   final String? parentBlockId;
   final String orderKey;
+  final int schemaVersion;
 
   factory BlockItem.fromJson(JsonMap json) => BlockItem(
         id: asString(json['id']),
@@ -27,21 +29,35 @@ class BlockItem {
         propsJson: json['propsJson']?.toString(),
         parentBlockId: json['parentBlockId']?.toString(),
         orderKey: asString(json['orderKey']),
+        schemaVersion: asInt(json['schemaVersion'], 1),
       );
 
-  BlockItem copyWith({String? type, String? textContent, String? propsJson}) => BlockItem(
+  BlockItem copyWith({
+    String? type,
+    String? textContent,
+    String? propsJson,
+    String? parentBlockId,
+    String? orderKey,
+    int? schemaVersion,
+  }) =>
+      BlockItem(
         id: id,
         pageId: pageId,
         type: type ?? this.type,
         textContent: textContent ?? this.textContent,
         propsJson: propsJson ?? this.propsJson,
-        parentBlockId: parentBlockId,
-        orderKey: orderKey,
+        parentBlockId: parentBlockId ?? this.parentBlockId,
+        orderKey: orderKey ?? this.orderKey,
+        schemaVersion: schemaVersion ?? this.schemaVersion,
       );
 }
 
 class PageDocument {
-  const PageDocument({required this.pageId, required this.currentRevision, required this.blocks});
+  const PageDocument({
+    required this.pageId,
+    required this.currentRevision,
+    required this.blocks,
+  });
 
   final String pageId;
   final int currentRevision;
@@ -55,7 +71,12 @@ class PageDocument {
 }
 
 class BlockMutation {
-  const BlockMutation({required this.pageId, this.blockId, required this.appliedRevision, this.block});
+  const BlockMutation({
+    required this.pageId,
+    this.blockId,
+    required this.appliedRevision,
+    this.block,
+  });
 
   final String pageId;
   final String? blockId;
@@ -66,6 +87,54 @@ class BlockMutation {
         pageId: asString(json['pageId']),
         blockId: json['blockId']?.toString(),
         appliedRevision: asInt(json['appliedRevision']),
-        block: json['block'] == null ? null : BlockItem.fromJson(asMap(json['block'])),
+        block: json['block'] == null
+            ? null
+            : BlockItem.fromJson(asMap(json['block'])),
       );
+}
+
+class BlockLease {
+  const BlockLease({
+    required this.blockId,
+    required this.pageId,
+    required this.granted,
+    required this.status,
+    this.holderUserId,
+    this.holderDisplayName,
+    this.expiresAtUtc,
+    this.isHeldByCurrentUser = false,
+  });
+
+  final String blockId;
+  final String pageId;
+  final bool granted;
+  final String status;
+  final String? holderUserId;
+  final String? holderDisplayName;
+  final DateTime? expiresAtUtc;
+  final bool isHeldByCurrentUser;
+
+  factory BlockLease.fromJson(JsonMap json) => BlockLease(
+        blockId: asString(json['blockId']),
+        pageId: asString(json['pageId']),
+        granted: asBool(json['granted']),
+        status: asString(json['status']),
+        holderUserId: json['holderUserId']?.toString(),
+        holderDisplayName: json['holderDisplayName']?.toString(),
+        expiresAtUtc: DateTime.tryParse(asString(json['expiresAtUtc'])),
+        isHeldByCurrentUser: asBool(json['isHeldByCurrentUser']),
+      );
+
+  bool get isReleased =>
+      status.toLowerCase() == 'released' ||
+      holderUserId == null ||
+      holderUserId!.isEmpty;
+
+  bool get isExpired {
+    final expires = expiresAtUtc;
+    if (expires == null) return false;
+    return expires.toUtc().isBefore(DateTime.now().toUtc());
+  }
+
+  bool get canWrite => granted && isHeldByCurrentUser && !isExpired;
 }

@@ -121,6 +121,8 @@ class _NotificationBellState extends State<NotificationBell> {
                                 item: _controller.notifications[index],
                                 onTap: () => _controller.markNotificationRead(
                                     _controller.notifications[index]),
+                                onMore: () => _showNotificationActions(
+                                    _controller.notifications[index]),
                               ),
                             ),
                 ),
@@ -131,17 +133,72 @@ class _NotificationBellState extends State<NotificationBell> {
       ),
     );
   }
+
+  Future<void> _showNotificationActions(NotificationItem item) async {
+    final action = await NotionBottomSheet.show<String>(
+      context: context,
+      title: item.title,
+      subtitle: item.message,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          NotionActionRow(
+            icon: item.isRead
+                ? Icons.mark_email_unread_outlined
+                : Icons.mark_email_read_outlined,
+            title: item.isRead ? 'Mark unread' : 'Mark read',
+            onTap: () => Navigator.pop(
+              context,
+              item.isRead ? 'unread' : 'read',
+            ),
+          ),
+          const Divider(height: 18),
+          NotionActionRow(
+            icon: Icons.delete_outline_rounded,
+            title: 'Delete notification',
+            danger: true,
+            onTap: () => Navigator.pop(context, 'delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (action == null) return;
+
+    if (action == 'read') {
+      await _controller.markNotificationRead(item);
+    } else if (action == 'unread') {
+      await _controller.markNotificationUnread(item);
+    } else if (action == 'delete') {
+      if (!mounted) return;
+      final confirmed = await NotionConfirmDialog.show(
+        context: context,
+        title: 'Delete notification?',
+        message: 'This removes it from your notification list.',
+        confirmLabel: 'Delete',
+        danger: true,
+      );
+      if (!confirmed) return;
+      await _controller.deleteNotification(item);
+    }
+  }
 }
 
 class _NotificationCard extends StatelessWidget {
-  const _NotificationCard({required this.item, required this.onTap});
+  const _NotificationCard({
+    required this.item,
+    required this.onTap,
+    required this.onMore,
+  });
 
   final NotificationItem item;
   final VoidCallback onTap;
+  final VoidCallback onMore;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    return NotionCard(
+      padding: EdgeInsets.zero,
       child: ListTile(
         onTap: onTap,
         leading: Container(
@@ -165,9 +222,18 @@ class _NotificationCard extends StatelessWidget {
           maxLines: 3,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: item.isRead
-            ? null
-            : const Icon(Icons.circle, size: 10, color: AppColors.accent),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!item.isRead)
+              const Icon(Icons.circle, size: 10, color: AppColors.accent),
+            IconButton(
+              tooltip: 'Notification actions',
+              onPressed: onMore,
+              icon: const Icon(Icons.more_horiz_rounded),
+            ),
+          ],
+        ),
       ),
     );
   }

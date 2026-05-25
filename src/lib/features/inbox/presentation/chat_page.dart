@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/json_utils.dart';
@@ -11,22 +13,33 @@ import '../domain/inbox_models.dart';
 import 'inbox_controller.dart';
 
 class ChatPage extends StatefulWidget {
-  const ChatPage(
-      {super.key, required this.controller, this.workspaces = const []});
+  const ChatPage({
+    super.key,
+    required this.controller,
+    this.workspaces = const [],
+    this.onWorkspaceOpened,
+  });
 
   final InboxController controller;
   final List<Workspace> workspaces;
+  final Future<void> Function(Workspace workspace)? onWorkspaceOpened;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
 
 class _ChatPageState extends State<ChatPage> {
+  static const _maxImageBytes = 8 * 1024 * 1024;
+
   final _text = TextEditingController();
   final _scroll = ScrollController();
+  final _picker = ImagePicker();
   Timer? _typingTimer;
   bool _typingActive = false;
   bool _sending = false;
+  XFile? _selectedImage;
+  Uint8List? _selectedImageBytes;
+  int _lastMessageCount = 0;
 
   @override
   void dispose() {
@@ -36,20 +49,69 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
+  Future<void> _pickImage() async {
+    if (_sending) return;
+
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 92,
+    );
+    if (picked == null) return;
+
+    final bytes = await picked.readAsBytes();
+    if (!mounted) return;
+
+    if (bytes.length > _maxImageBytes) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ảnh tối đa 8MB. Chọn ảnh nhẹ hơn nha.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _selectedImage = picked;
+      _selectedImageBytes = bytes;
+    });
+  }
+
+  void _clearSelectedImage() {
+    setState(() {
+      _selectedImage = null;
+      _selectedImageBytes = null;
+    });
+  }
+
   Future<void> _send() async {
-    if (_sending || _text.text.trim().isEmpty) return;
-    final text = _text.text;
+    if (_sending) return;
+
+    final image = _selectedImage;
+    final bytes = _selectedImageBytes;
+    final text = _text.text.trim();
+
+    if ((image == null || bytes == null) && text.isEmpty) return;
+
     setState(() => _sending = true);
     _text.clear();
+    _clearSelectedImage();
+
     try {
-      await widget.controller.sendText(text);
+      if (image != null && bytes != null) {
+        await widget.controller.sendImage(
+          bytes: bytes,
+          fileName: image.name,
+          contentType: image.mimeType,
+          caption: text,
+        );
+      } else {
+        await widget.controller.sendText(text);
+      }
       await widget.controller.publishTyping(false);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scroll.hasClients)
-          _scroll.animateTo(_scroll.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOut);
-      });
+      _scrollToBottom();
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err.toString())),
+      );
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -67,12 +129,29 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) {
         final conversation = widget.controller.selectedConversation;
+        final messageCount = widget.controller.messages.length;
+        if (messageCount != _lastMessageCount) {
+          _lastMessageCount = messageCount;
+          _scrollToBottom();
+        }
+
         return Scaffold(
           appBar: AppBar(
             titleSpacing: 0,
@@ -103,29 +182,46 @@ class _ChatPageState extends State<ChatPage> {
           body: Column(
             children: [
               Expanded(
-                child: ListView.builder(
-                  controller: _scroll,
-                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
-                  itemCount: widget.controller.messages.length,
-                  itemBuilder: (context, index) {
-                    final message = widget.controller.messages[index];
-                    return _MessageBubble(
-                      message: message,
-                      onAcceptWorkspaceShare: message.isMine ||
-                              !message.isWorkspaceShare
-                          ? null
-                          : () async {
-                              final workspace = await widget.controller
-                                  .acceptWorkspaceShare(message);
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                      content:
-                                          Text('Opened "${workspace.name}".')));
-                            },
-                    );
-                  },
-                ),
+                child: widget.controller.messages.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Hãy gửi tin nhắn đầu tiên.',
+                          style: TextStyle(color: AppColors.muted),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
+                        itemCount: widget.controller.messages.length,
+                        itemBuilder: (context, index) {
+                          final message = widget.controller.messages[index];
+                          return _MessageBubble(
+                            message: message,
+                            onAcceptWorkspaceShare: message.isMine ||
+                                    !message.isWorkspaceShare
+                                ? null
+                                : () async {
+                                    final workspace = await widget.controller
+                                        .acceptWorkspaceShare(message);
+                                    if (!context.mounted) return;
+
+                                    if (widget.onWorkspaceOpened != null) {
+                                      await widget.onWorkspaceOpened!(workspace);
+                                      if (context.mounted) {
+                                        await Navigator.of(context).maybePop();
+                                      }
+                                      return;
+                                    }
+
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Opened "${workspace.name}".'),
+                                      ),
+                                    );
+                                  },
+                          );
+                        },
+                      ),
               ),
               if (widget.controller.typingText != null)
                 Padding(
@@ -143,28 +239,49 @@ class _ChatPageState extends State<ChatPage> {
                     color: AppColors.surface,
                     border: Border(top: BorderSide(color: AppColors.line)),
                   ),
-                  child: Row(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _text,
-                          minLines: 1,
-                          maxLines: 5,
-                          decoration: const InputDecoration(
-                              hintText: 'Message...', filled: true),
-                          onChanged: _handleTyping,
-                          onSubmitted: (_) => _send(),
+                      if (_selectedImage != null && _selectedImageBytes != null)
+                        _SelectedImagePreview(
+                          name: _selectedImage!.name,
+                          bytes: _selectedImageBytes!,
+                          onClear: _clearSelectedImage,
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        onPressed: _sending ? null : _send,
-                        icon: _sending
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.send_rounded),
+                      Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'Gửi ảnh',
+                            onPressed: _sending ? null : _pickImage,
+                            icon: const Icon(Icons.image_outlined),
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: _text,
+                              minLines: 1,
+                              maxLines: 5,
+                              decoration: InputDecoration(
+                                hintText: _selectedImage == null
+                                    ? 'Message...'
+                                    : 'Caption for image...',
+                                filled: true,
+                              ),
+                              onChanged: _handleTyping,
+                              onSubmitted: (_) => _send(),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton.filled(
+                            onPressed: _sending || widget.controller.isSendingMessage
+                                ? null
+                                : _send,
+                            icon: _sending || widget.controller.isSendingMessage
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2))
+                                : const Icon(Icons.send_rounded),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -174,6 +291,56 @@ class _ChatPageState extends State<ChatPage> {
           ),
         );
       },
+    );
+  }
+}
+
+class _SelectedImagePreview extends StatelessWidget {
+  const _SelectedImagePreview({
+    required this.name,
+    required this.bytes,
+    required this.onClear,
+  });
+
+  final String name;
+  final Uint8List bytes;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        border: Border.all(color: AppColors.line),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.memory(bytes, width: 46, height: 46, fit: BoxFit.cover),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Bỏ ảnh',
+            onPressed: onClear,
+            icon: const Icon(Icons.close_rounded),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -188,6 +355,7 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final share = message.workspaceShare;
     final isShare = message.isWorkspaceShare && share != null;
+    final hasImage = message.imageUrl?.isNotEmpty == true;
     final alignment =
         message.isMine ? Alignment.centerRight : Alignment.centerLeft;
     final bubbleColor = message.isMine ? AppColors.ink : AppColors.surface;
@@ -197,7 +365,10 @@ class _MessageBubble extends StatelessWidget {
       alignment: alignment,
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: EdgeInsets.symmetric(
+          horizontal: hasImage ? 7 : 14,
+          vertical: hasImage ? 7 : 10,
+        ),
         constraints:
             BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .80),
         decoration: BoxDecoration(
@@ -221,26 +392,48 @@ class _MessageBubble extends StatelessWidget {
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (message.imageUrl?.isNotEmpty == true) ...[
+                  if (hasImage) ...[
                     ClipRRect(
                       borderRadius: BorderRadius.circular(14),
-                      child: Image.network(
-                          resolveImageUrl(message.imageUrl) ??
-                              message.imageUrl!,
-                          fit: BoxFit.cover),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.sizeOf(context).height * .42,
+                          minWidth: 160,
+                        ),
+                        child: Image.network(
+                          resolveImageUrl(message.imageUrl) ?? message.imageUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 220,
+                            height: 120,
+                            color: AppColors.background,
+                            alignment: Alignment.center,
+                            child: const Text(
+                              'Không tải được ảnh',
+                              style: TextStyle(color: AppColors.muted),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 8),
+                    if (message.body.isNotEmpty) const SizedBox(height: 8),
                   ],
                   if (message.body.isNotEmpty)
-                    Text(message.body,
-                        style: TextStyle(color: textColor, height: 1.35)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: hasImage ? 5 : 0),
+                      child: Text(message.body,
+                          style: TextStyle(color: textColor, height: 1.35)),
+                    ),
                   const SizedBox(height: 4),
-                  Text(shortDate(message.createdDate),
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: message.isMine
-                              ? AppColors.subtle
-                              : AppColors.muted)),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: hasImage ? 5 : 0),
+                    child: Text(shortDate(message.createdDate),
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: message.isMine
+                                ? AppColors.subtle
+                                : AppColors.muted)),
+                  ),
                 ],
               ),
       ),

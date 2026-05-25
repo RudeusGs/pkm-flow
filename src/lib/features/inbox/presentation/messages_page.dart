@@ -6,12 +6,15 @@ import '../../../core/utils/json_utils.dart';
 import '../../../shared/widgets/app_avatar.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/notion_widgets.dart';
+import '../../workspaces/domain/workspace.dart';
 import '../domain/inbox_models.dart';
 import 'chat_page.dart';
 import 'inbox_controller.dart';
 
 class MessagesPage extends StatefulWidget {
-  const MessagesPage({super.key});
+  const MessagesPage({super.key, this.onWorkspaceOpened});
+
+  final Future<void> Function(Workspace workspace)? onWorkspaceOpened;
 
   @override
   State<MessagesPage> createState() => _MessagesPageState();
@@ -36,6 +39,20 @@ class _MessagesPageState extends State<MessagesPage> {
     _search.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _openConversation(Conversation conversation) async {
+    await _controller.openConversation(conversation);
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatPage(
+          controller: _controller,
+          onWorkspaceOpened: widget.onWorkspaceOpened,
+        ),
+      ),
+    );
   }
 
   @override
@@ -99,9 +116,7 @@ class _MessagesPageState extends State<MessagesPage> {
                   hasScrollBody: false,
                   child: EmptyState(
                     icon: Icons.chat_bubble_outline_rounded,
-                    title: query.isEmpty
-                        ? 'No conversations yet'
-                        : 'No chat found',
+                    title: query.isEmpty ? 'No conversations yet' : 'No chat found',
                     message: query.isEmpty
                         ? 'Find someone in People and start a conversation.'
                         : 'Try another name or message.',
@@ -118,16 +133,7 @@ class _MessagesPageState extends State<MessagesPage> {
                         final conversation = conversations[index];
                         return _ConversationCard(
                           conversation: conversation,
-                          onTap: () async {
-                            await _controller.openConversation(conversation);
-                            if (!context.mounted) return;
-                            await Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    ChatPage(controller: _controller),
-                              ),
-                            );
-                          },
+                          onTap: () => _openConversation(conversation),
                         );
                       },
                       childCount: conversations.length * 2 - 1,
@@ -168,7 +174,9 @@ class _ConversationCard extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-              color: AppColors.ink, fontWeight: FontWeight.w900),
+            color: AppColors.ink,
+            fontWeight: FontWeight.w900,
+          ),
         ),
         subtitle: Text(
           preview?.isNotEmpty == true ? preview! : 'No messages yet',
@@ -183,16 +191,20 @@ class _ConversationCard extends StatelessWidget {
             Text(
               time,
               style: const TextStyle(
-                  color: AppColors.subtle,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700),
+                color: AppColors.subtle,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 6),
             if (conversation.unreadCount > 0)
               Badge(label: Text('${conversation.unreadCount}'))
             else
-              const Icon(Icons.chevron_right_rounded,
-                  color: AppColors.muted, size: 20),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.muted,
+                size: 20,
+              ),
           ],
         ),
       ),

@@ -85,6 +85,28 @@ class WorkspaceController extends ChangeNotifier {
     await loadMembers();
   }
 
+
+  Future<void> openWorkspace(Workspace workspace) async {
+    final existing = _findWorkspace(workspace.id);
+
+    if (existing == null) {
+      workspaces = [workspace, ...workspaces];
+    } else {
+      workspaces = workspaces
+          .map((item) => item.id == workspace.id ? workspace : item)
+          .toList();
+    }
+
+    if (selected?.id == workspace.id) {
+      selected = workspace;
+      await loadMembers(silent: true);
+      notifyListeners();
+      return;
+    }
+
+    await select(workspace);
+  }
+
   Future<void> create(
     String name, {
     String? description,

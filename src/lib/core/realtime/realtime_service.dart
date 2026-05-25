@@ -243,9 +243,9 @@ class RealtimeService extends ChangeNotifier {
     _joinedWorkspaces.add(id);
     if (!isConnected) {
       // Queue group rồi để start/backoff xử lý. Không invoke liên tục.
-      start();
-      return;
+      await start();
     }
+    if (!isConnected) return;
     if (_activeWorkspaces.contains(id)) return;
 
     if (await _safeInvoke('JoinWorkspace', <Object>[id])) {
@@ -274,9 +274,9 @@ class RealtimeService extends ChangeNotifier {
 
     _joinedPages.add(id);
     if (!isConnected) {
-      start();
-      return;
+      await start();
     }
+    if (!isConnected) return;
     if (_activePages.contains(id)) return;
 
     if (await _safeInvoke('JoinPage', <Object>[id])) {

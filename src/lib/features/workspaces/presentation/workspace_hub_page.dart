@@ -54,10 +54,28 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
     }
   }
 
+  void _loadTrash() {
+    final workspace = widget.workspaceController.selected;
+    if (workspace != null) {
+      _pages.loadTrash(workspace.id);
+    }
+  }
+
   void _onSearchChanged(String value) {
     _searchDebounce?.cancel();
     _searchDebounce = Timer(
         const Duration(milliseconds: 320), () => _loadPages(keyword: value));
+  }
+
+  void _toggleTrashView() {
+    _searchDebounce?.cancel();
+    _search.clear();
+    setState(() {});
+    if (_pages.isTrashView) {
+      _loadPages(keyword: '');
+    } else {
+      _loadTrash();
+    }
   }
 
   @override
@@ -78,7 +96,11 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
         return RefreshIndicator(
           onRefresh: () async {
             await widget.workspaceController.load();
-            _loadPages();
+            if (_pages.isTrashView) {
+              _loadTrash();
+            } else {
+              _loadPages();
+            }
           },
           child: CustomScrollView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -95,33 +117,57 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
                   padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
                   child: Column(
                     children: [
-                      NotionTextField(
-                        controller: _search,
-                        hintText: 'Search pages...',
-                        prefixIcon: Icons.search_rounded,
-                        suffixIcon: _search.text.isEmpty
-                            ? null
-                            : IconButton(
-                                tooltip: 'Clear search',
-                                onPressed: () {
-                                  _search.clear();
-                                  _loadPages(keyword: '');
-                                  setState(() {});
-                                },
-                                icon: const Icon(Icons.close_rounded),
+                      if (!_pages.isTrashView) ...[
+                        NotionTextField(
+                          controller: _search,
+                          hintText: 'Search pages...',
+                          prefixIcon: Icons.search_rounded,
+                          suffixIcon: _search.text.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: 'Clear search',
+                                  onPressed: () {
+                                    _search.clear();
+                                    _loadPages(keyword: '');
+                                    setState(() {});
+                                  },
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                          onChanged: (value) {
+                            setState(() {});
+                            _onSearchChanged(value);
+                          },
+                          onSubmitted: (value) => _loadPages(keyword: value),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      Row(
+                        children: [
+                          if (!_pages.isTrashView) ...[
+                            Expanded(
+                              child: NotionButton(
+                                label: 'Create page',
+                                icon: Icons.note_add_outlined,
+                                expanded: true,
+                                onPressed: () => _showCreatePage(context),
                               ),
-                        onChanged: (value) {
-                          setState(() {});
-                          _onSearchChanged(value);
-                        },
-                        onSubmitted: (value) => _loadPages(keyword: value),
-                      ),
-                      const SizedBox(height: 12),
-                      NotionButton(
-                        label: 'Create page',
-                        icon: Icons.note_add_outlined,
-                        expanded: true,
-                        onPressed: () => _showCreatePage(context),
+                            ),
+                            const SizedBox(width: 10),
+                          ],
+                          Expanded(
+                            child: NotionButton(
+                              label: _pages.isTrashView
+                                  ? 'Back to pages'
+                                  : 'Trash',
+                              icon: _pages.isTrashView
+                                  ? Icons.description_outlined
+                                  : Icons.delete_outline_rounded,
+                              secondary: !_pages.isTrashView,
+                              expanded: true,
+                              onPressed: _toggleTrashView,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -152,16 +198,24 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
         child: EmptyState(
           icon: Icons.description_outlined,
           title: _search.text.trim().isEmpty
-              ? 'No pages yet'
+              ? (_pages.isTrashView ? 'Trash is empty' : 'No pages yet')
               : 'No matching pages',
           message: _search.text.trim().isEmpty
-              ? 'Create a first page for notes, plans, or anything you want to remember.'
+              ? (_pages.isTrashView
+                  ? 'Deleted pages will show up here so you can restore them.'
+                  : 'Create a first page for notes, plans, or anything you want to remember.')
               : 'Try a shorter search or create a new page.',
-          action: NotionButton(
-            label: 'Create page',
-            icon: Icons.add_rounded,
-            onPressed: () => _showCreatePage(context),
-          ),
+          action: _pages.isTrashView
+              ? NotionButton(
+                  label: 'Back to pages',
+                  icon: Icons.description_outlined,
+                  onPressed: _toggleTrashView,
+                )
+              : NotionButton(
+                  label: 'Create page',
+                  icon: Icons.add_rounded,
+                  onPressed: () => _showCreatePage(context),
+                ),
         ),
       );
     }
@@ -404,39 +458,63 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
           NotionActionRow(
             icon: Icons.open_in_new_rounded,
             title: 'Open',
+            enabled: !page.isArchived,
             onTap: () => Navigator.pop(context, 'open'),
           ),
           NotionActionRow(
             icon: Icons.drive_file_rename_outline_rounded,
             title: 'Rename',
+            enabled: !page.isArchived,
             onTap: () => Navigator.pop(context, 'rename'),
           ),
-          const NotionActionRow(
+          if (!page.isArchived)
+            NotionActionRow(
+              icon: page.isFavorite
+                  ? Icons.star_rounded
+                  : Icons.star_border_rounded,
+              title: page.isFavorite ? 'Remove favorite' : 'Add favorite',
+              onTap: () => Navigator.pop(
+                context,
+                page.isFavorite ? 'unfavorite' : 'favorite',
+              ),
+            ),
+          NotionActionRow(
             icon: Icons.content_copy_rounded,
             title: 'Duplicate',
-            subtitle: 'Waiting for backend support.',
-            enabled: false,
+            subtitle: 'Create a copy of this page.',
+            enabled: !page.isArchived,
+            onTap: () => Navigator.pop(context, 'duplicate'),
           ),
-          const NotionActionRow(
-            icon: Icons.folder_open_rounded,
-            title: 'Move',
-            subtitle: 'Waiting for backend support.',
-            enabled: false,
-          ),
-          const NotionActionRow(
-            icon: Icons.ios_share_rounded,
-            title: 'Share',
-            subtitle: 'Workspace sharing is available from the top menu.',
-            enabled: false,
-          ),
+          if (!page.isArchived) ...[
+            const NotionActionRow(
+              icon: Icons.folder_open_rounded,
+              title: 'Move',
+              subtitle: 'Move page is not wired on mobile yet.',
+              enabled: false,
+            ),
+            const NotionActionRow(
+              icon: Icons.ios_share_rounded,
+              title: 'Share',
+              subtitle: 'Workspace sharing is available from the top menu.',
+              enabled: false,
+            ),
+          ],
           const Divider(height: 18),
-          const NotionActionRow(
-            icon: Icons.archive_outlined,
-            title: 'Archive page',
-            subtitle: 'Waiting for backend support.',
-            danger: true,
-            enabled: false,
-          ),
+          if (page.isArchived)
+            NotionActionRow(
+              icon: Icons.restore_rounded,
+              title: 'Restore page',
+              subtitle: 'Move this page back to the active page list.',
+              onTap: () => Navigator.pop(context, 'restore'),
+            )
+          else
+            NotionActionRow(
+              icon: Icons.delete_outline_rounded,
+              title: 'Move to trash',
+              subtitle: 'This page will move to trash and can be restored.',
+              danger: true,
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
         ],
       ),
     );
@@ -445,6 +523,58 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
       await _openPage(page);
     } else if (action == 'rename') {
       await _showRenamePage(page);
+    } else if (action == 'duplicate') {
+      final duplicated = await _pages.duplicatePage(page);
+      if (!mounted || duplicated == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Duplicated "${page.title}".')),
+      );
+    } else if (action == 'favorite') {
+      final saved = await _pages.favoritePage(page);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(saved
+              ? 'Added "${page.title}" to favorites.'
+              : _pages.error ?? 'Could not update favorite.'),
+        ),
+      );
+    } else if (action == 'unfavorite') {
+      final saved = await _pages.unfavoritePage(page);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(saved
+              ? 'Removed "${page.title}" from favorites.'
+              : _pages.error ?? 'Could not update favorite.'),
+        ),
+      );
+    } else if (action == 'restore') {
+      final restored = await _pages.restorePage(page);
+      if (!mounted || restored == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Restored "${page.title}".')),
+      );
+    } else if (action == 'delete') {
+      if (!mounted) return;
+      final confirmed = await NotionConfirmDialog.show(
+        context: context,
+        title: 'Move page to trash?',
+        message: 'You can restore it later from Trash.',
+        confirmLabel: 'Move',
+        danger: true,
+      );
+
+      if (!confirmed) return;
+      final deleted = await _pages.deletePage(page);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(deleted
+              ? 'Moved "${page.title}" to trash.'
+              : _pages.error ?? 'Could not move page to trash.'),
+        ),
+      );
     }
   }
 

@@ -90,18 +90,27 @@ class _EditorPageState extends State<EditorPage> {
                   itemBuilder: (context, index) {
                     if (index == 0) {
                       return _PageHeader(
-                          icon: _icon, title: _title, onSave: _saveTitle);
+                        icon: _icon,
+                        title: _title,
+                        onSave: _saveTitle,
+                      );
                     }
 
                     final blockIndex = index - 1;
                     final block = widget.controller.blocks[blockIndex];
                     return BlockEditorTile(
+                      key: ValueKey(block.id),
                       block: block,
                       index: blockIndex,
                       totalCount: widget.controller.blocks.length,
                       autofocus: block.id == _pendingFocusBlockId,
+                      hasLease: widget.controller.isLeaseHeldByMe(block),
                       onAutofocusHandled: () =>
                           setState(() => _pendingFocusBlockId = null),
+                      onFocusBlock: () =>
+                          widget.controller.startEditingBlock(block),
+                      onFinishBlock: () =>
+                          widget.controller.finishEditingBlock(block),
                       onChanged: (type, text, {propsJson}) =>
                           widget.controller.updateBlock(
                         block,
@@ -119,13 +128,8 @@ class _EditorPageState extends State<EditorPage> {
                         }
                       },
                       onDelete: () => widget.controller.deleteBlock(block),
-                      onMoveUnsupported: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text(
-                                  'Moving blocks needs backend ordering support.')),
-                        );
-                      },
+                      onMoveUp: () => widget.controller.moveBlockUp(block),
+                      onMoveDown: () => widget.controller.moveBlockDown(block),
                     );
                   },
                 ),
@@ -143,8 +147,9 @@ class _EditorPageState extends State<EditorPage> {
     );
     if (type != null) {
       final block = await widget.controller.addBlock(type);
-      if (block != null && mounted)
+      if (block != null && mounted) {
         setState(() => _pendingFocusBlockId = block.id);
+      }
     }
   }
 }
@@ -226,7 +231,11 @@ class BlockEditorTile extends StatefulWidget {
     required this.onDraft,
     required this.onDuplicate,
     required this.onDelete,
-    required this.onMoveUnsupported,
+    required this.onMoveUp,
+    required this.onMoveDown,
+    required this.onFocusBlock,
+    required this.onFinishBlock,
+    required this.hasLease,
     this.autofocus = false,
     this.onAutofocusHandled,
   });
@@ -239,7 +248,11 @@ class BlockEditorTile extends StatefulWidget {
   final Future<void> Function(String text) onDraft;
   final Future<void> Function() onDuplicate;
   final Future<void> Function() onDelete;
-  final VoidCallback onMoveUnsupported;
+  final Future<void> Function() onMoveUp;
+  final Future<void> Function() onMoveDown;
+  final Future<void> Function() onFocusBlock;
+  final Future<void> Function() onFinishBlock;
+  final bool hasLease;
   final bool autofocus;
   final VoidCallback? onAutofocusHandled;
 
@@ -251,8 +264,15 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
   late final TextEditingController _text;
   late final FocusNode _focusNode;
   late String _type;
+
   Timer? _draftTimer;
+  Timer? _saveTimer;
   bool _saving = false;
+  bool _startingEdit = false;
+
+  late String _lastCommittedType;
+  late String _lastCommittedText;
+  String? _lastCommittedPropsJson;
 
   static const _supportedTypes = <String>{
     'paragraph',
@@ -275,15 +295,20 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
     _text = TextEditingController(text: widget.block.textContent);
     _focusNode = FocusNode()..addListener(_handleFocusChange);
     _type = _normalizeType(widget.block.type);
+    _markCommittedFromWidget();
     if (widget.autofocus) _requestFocus();
   }
 
   @override
   void didUpdateWidget(covariant BlockEditorTile oldWidget) {
     super.didUpdateWidget(oldWidget);
+
     if (oldWidget.block.id != widget.block.id) {
+      _draftTimer?.cancel();
+      _saveTimer?.cancel();
       _text.text = widget.block.textContent;
       _type = _normalizeType(widget.block.type);
+      _markCommittedFromWidget();
       if (widget.autofocus) _requestFocus();
       return;
     }
@@ -291,16 +316,28 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
     if (!_focusNode.hasFocus &&
         oldWidget.block.textContent != widget.block.textContent) {
       _text.text = widget.block.textContent;
+      _lastCommittedText = widget.block.textContent;
     }
+
     if (oldWidget.block.type != widget.block.type) {
       _type = _normalizeType(widget.block.type);
+      _lastCommittedType = _type;
     }
+
+    if (oldWidget.block.propsJson != widget.block.propsJson) {
+      _lastCommittedPropsJson = widget.block.propsJson;
+    }
+
     if (!oldWidget.autofocus && widget.autofocus) _requestFocus();
   }
 
   @override
   void dispose() {
     _draftTimer?.cancel();
+    _saveTimer?.cancel();
+    if (_isDirty && !_saving) {
+      widget.onChanged(_type, _text.text, propsJson: _currentPropsJson);
+    }
     _focusNode.removeListener(_handleFocusChange);
     _focusNode.dispose();
     _text.dispose();
@@ -309,6 +346,12 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
 
   String _normalizeType(String type) =>
       _supportedTypes.contains(type) ? type : 'paragraph';
+
+  void _markCommittedFromWidget() {
+    _lastCommittedType = _normalizeType(widget.block.type);
+    _lastCommittedText = widget.block.textContent;
+    _lastCommittedPropsJson = widget.block.propsJson;
+  }
 
   void _requestFocus() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -319,13 +362,30 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
   }
 
   void _handleFocusChange() {
-    if (!_focusNode.hasFocus) {
-      _commitText();
+    if (_focusNode.hasFocus) {
+      _beginEditing();
+    } else {
+      _commitText().whenComplete(() {
+        if (mounted) widget.onFinishBlock();
+      });
+    }
+  }
+
+  Future<void> _beginEditing() async {
+    if (_startingEdit) return;
+    _startingEdit = true;
+    try {
+      await widget.onFocusBlock();
+    } finally {
+      _startingEdit = false;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final showLockHint =
+        _focusNode.hasFocus && !widget.hasLease && !_startingEdit && !_saving;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -335,7 +395,26 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
             type: _type,
             onTap: _showBlockMenu,
           ),
-          Expanded(child: _buildBlockBody()),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildBlockBody(),
+                if (showLockHint)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 2, top: 2, bottom: 4),
+                    child: Text(
+                      'Đang lấy quyền sửa...',
+                      style: TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -356,10 +435,22 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
     if (_type == 'table') {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
-        child: TableBlockView(
-          propsJson: widget.block.propsJson,
-          onChanged: (propsJson) =>
-              widget.onChanged('table', '', propsJson: propsJson),
+        child: Stack(
+          children: [
+            TableBlockView(
+              propsJson: widget.block.propsJson,
+              onChanged: _commitTable,
+            ),
+            if (_saving)
+              const Positioned(
+                top: 8,
+                right: 8,
+                child: SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(strokeWidth: 1.8),
+                ),
+              ),
+          ],
         ),
       );
     }
@@ -510,25 +601,62 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
     };
   }
 
+  String? get _currentPropsJson =>
+      _type == 'table' ? widget.block.propsJson : null;
+
+  bool get _isDirty =>
+      _type != _lastCommittedType ||
+      _text.text != _lastCommittedText ||
+      _currentPropsJson != _lastCommittedPropsJson;
+
   void _handleTextChanged(String value) {
     _draftTimer?.cancel();
-    _draftTimer = Timer(const Duration(milliseconds: 700), () {
+    _draftTimer = Timer(const Duration(milliseconds: 250), () {
       widget.onDraft(value);
     });
+
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 900), _commitText);
+  }
+
+  Future<void> _commitTable(String propsJson) async {
+    if (_saving) return;
+
+    setState(() => _saving = true);
+    try {
+      await widget.onChanged('table', '', propsJson: propsJson);
+      _lastCommittedType = 'table';
+      _lastCommittedText = '';
+      _lastCommittedPropsJson = propsJson;
+    } catch (err) {
+      _showError(err);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _commitText() async {
-    if (_type == 'table' || _saving) return;
+    if (_type == 'table' || _saving || !_isDirty) return;
+
     _draftTimer?.cancel();
+    _saveTimer?.cancel();
+
     setState(() => _saving = true);
     try {
-      await widget.onChanged(_type, _text.text);
+      await widget.onChanged(_type, _text.text, propsJson: _currentPropsJson);
+      _lastCommittedType = _type;
+      _lastCommittedText = _text.text;
+      _lastCommittedPropsJson = _currentPropsJson;
+    } catch (err) {
+      _showError(err);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _showBlockMenu() async {
+    await _commitText();
+
     final action = await BlockActionSheet.show(
       context: context,
       hasContent: _hasContent,
@@ -545,9 +673,9 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
         builder: (context) => const BlockPickerSheet(),
       );
       if (type == null) return;
-      setState(() => _type = type);
-      await widget.onChanged(_type, _text.text,
-          propsJson: _type == 'table' ? widget.block.propsJson : null);
+
+      setState(() => _type = _normalizeType(type));
+      await _commitText();
       return;
     }
 
@@ -556,8 +684,13 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
       return;
     }
 
-    if (action == 'move_up' || action == 'move_down') {
-      widget.onMoveUnsupported();
+    if (action == 'move_up') {
+      await widget.onMoveUp();
+      return;
+    }
+
+    if (action == 'move_down') {
+      await widget.onMoveDown();
       return;
     }
 
@@ -578,9 +711,17 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
 
   bool get _hasContent {
     if (_type == 'divider') return false;
-    if (_type == 'table')
+    if (_type == 'table') {
       return widget.block.propsJson?.trim().isNotEmpty == true;
+    }
     return _text.text.trim().isNotEmpty;
+  }
+
+  void _showError(Object err) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(err.toString())),
+    );
   }
 }
 
@@ -680,9 +821,10 @@ class _ImageBlockEditor extends StatelessWidget {
                 keyboardType: TextInputType.url,
                 textInputAction: TextInputAction.done,
                 style: const TextStyle(
-                    color: AppColors.ink,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600),
+                  color: AppColors.ink,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
                 decoration: const InputDecoration(
                   hintText: 'Paste image URL',
                   prefixIcon: Icon(Icons.link_rounded),

@@ -1,9 +1,6 @@
 class AppConfig {
   const AppConfig._();
 
-  /// Flutter Web / Windows dev: https://localhost:7286/api/v1
-  /// Android emulator:          https://10.0.2.2:7286/api/v1
-  /// Real device:               https://<LAN-IP>:7286/api/v1
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
     defaultValue: 'https://localhost:7286/api/v1',

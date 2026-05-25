@@ -25,6 +25,7 @@ class InboxController extends ChangeNotifier {
   Conversation? selectedConversation;
   String? typingText;
   bool isLoading = false;
+  bool isSendingMessage = false;
   String? error;
 
   Future<void> load() async {
@@ -65,16 +66,55 @@ class InboxController extends ChangeNotifier {
     }
   }
 
-  Future<void> markNotificationRead(NotificationItem item) async {
-    if (!item.isRead) {
-      await _repository.markNotificationRead(item.id);
+  Future<bool> markNotificationRead(NotificationItem item) async {
+    try {
+      if (!item.isRead) {
+        await _repository.markNotificationRead(item.id);
+      }
+      await loadNotifications(silent: true);
+      return true;
+    } catch (err) {
+      error = err.toString();
+      notifyListeners();
+      return false;
     }
-    await loadNotifications(silent: true);
+  }
+
+  Future<bool> markNotificationUnread(NotificationItem item) async {
+    try {
+      if (item.isRead) {
+        await _repository.markNotificationUnread(item.id);
+      }
+      await loadNotifications(silent: true);
+      return true;
+    } catch (err) {
+      error = err.toString();
+      notifyListeners();
+      return false;
+    }
   }
 
   Future<void> markAllNotificationsRead({String? workspaceId}) async {
     await _repository.markAllNotificationsRead(workspaceId: workspaceId);
     await loadNotifications(silent: true, workspaceId: workspaceId);
+  }
+
+  Future<bool> deleteNotification(NotificationItem item) async {
+    try {
+      await _repository.deleteNotification(item.id);
+      notifications =
+          notifications.where((entry) => entry.id != item.id).toList();
+      if (!item.isRead) {
+        final nextUnread = unreadNotifications - 1;
+        unreadNotifications = nextUnread < 0 ? 0 : nextUnread;
+      }
+      notifyListeners();
+      return true;
+    } catch (err) {
+      error = err.toString();
+      notifyListeners();
+      return false;
+    }
   }
 
   Future<void> loadConversations({bool silent = false}) async {
@@ -107,11 +147,47 @@ class InboxController extends ChangeNotifier {
 
   Future<void> sendText(String text) async {
     final conversation = selectedConversation;
-    if (conversation == null || text.trim().isEmpty) return;
-    final sent = await _repository.sendText(conversation.id, text.trim());
-    messages = [...messages, sent];
-    await loadConversations(silent: true);
+    if (conversation == null || text.trim().isEmpty || isSendingMessage) return;
+
+    isSendingMessage = true;
+    error = null;
     notifyListeners();
+    try {
+      final sent = await _repository.sendText(conversation.id, text.trim());
+      _upsertMessage(sent);
+      await loadConversations(silent: true);
+    } finally {
+      isSendingMessage = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> sendImage({
+    required Uint8List bytes,
+    required String fileName,
+    String? contentType,
+    String? caption,
+  }) async {
+    final conversation = selectedConversation;
+    if (conversation == null || bytes.isEmpty || isSendingMessage) return;
+
+    isSendingMessage = true;
+    error = null;
+    notifyListeners();
+    try {
+      final sent = await _repository.sendImage(
+        conversation.id,
+        bytes: bytes,
+        fileName: fileName,
+        contentType: contentType,
+        caption: caption,
+      );
+      _upsertMessage(sent);
+      await loadConversations(silent: true);
+    } finally {
+      isSendingMessage = false;
+      notifyListeners();
+    }
   }
 
   Future<void> sendWorkspaceShare(
@@ -121,13 +197,14 @@ class InboxController extends ChangeNotifier {
     final message = await _repository.sendWorkspaceShare(conversation.id,
         workspaceId: workspace.id, role: role);
     if (selectedConversation?.id == conversation.id) {
-      messages = [...messages, message];
+      _upsertMessage(message);
     }
     await loadConversations(silent: true);
   }
 
   Future<Workspace> acceptWorkspaceShare(MessageItem message) async {
     final workspace = await _repository.acceptWorkspaceShare(message.id);
+    await loadConversations(silent: true);
     notifyListeners();
     return workspace;
   }
@@ -175,6 +252,28 @@ class InboxController extends ChangeNotifier {
     }));
   }
 
+  void _upsertMessage(MessageItem message) {
+    final next = [...messages];
+    final index = next.indexWhere((item) => item.id == message.id);
+    if (index >= 0) {
+      next[index] = message;
+    } else {
+      next.add(message);
+    }
+    next.sort(_compareMessagesOldestFirst);
+    messages = next;
+    notifyListeners();
+  }
+
+  static int _compareMessagesOldestFirst(MessageItem a, MessageItem b) {
+    final left = DateTime.tryParse(a.createdDate ?? '') ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+    final right = DateTime.tryParse(b.createdDate ?? '') ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+    final result = left.compareTo(right);
+    return result == 0 ? a.id.compareTo(b.id) : result;
+  }
+
   void _debounced(Future<void> Function() action) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () => action());
@@ -186,8 +285,9 @@ class InboxController extends ChangeNotifier {
       off();
     }
     _debounce?.cancel();
-    if (selectedConversation != null)
+    if (selectedConversation != null) {
       _realtime.leaveConversation(selectedConversation!.id);
+    }
     super.dispose();
   }
 }

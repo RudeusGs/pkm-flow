@@ -84,6 +84,20 @@ class AuthRepository {
     return user;
   }
 
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return _apiClient.patch<void>(
+      'me/password',
+      data: {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      },
+      parser: (_) {},
+    );
+  }
+
   Future<void> logout() async {
     final refresh = await _tokenStore.readRefreshToken();
     if (refresh != null && refresh.trim().isNotEmpty) {

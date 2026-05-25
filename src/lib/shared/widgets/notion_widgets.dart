@@ -135,6 +135,11 @@ class _NotionBottomNavState extends State<NotionBottomNav> {
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    final count = widget.items.length;
+
+    if (count == 0) {
+      return const SizedBox.shrink();
+    }
 
     return DecoratedBox(
       decoration: const BoxDecoration(
@@ -145,39 +150,31 @@ class _NotionBottomNavState extends State<NotionBottomNav> {
         height: 54 + bottomPadding,
         child: Padding(
           padding: EdgeInsets.only(bottom: bottomPadding),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final count = widget.items.length;
-              final baseWidth = constraints.maxWidth / count;
-              final focusedWidth =
-                  (baseWidth * 1.22).clamp(baseWidth, baseWidth + 28);
-              final otherWidth = count <= 1
-                  ? constraints.maxWidth
-                  : (constraints.maxWidth - focusedWidth) / (count - 1);
-
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < count; i++)
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 190),
-                      curve: Curves.easeOutCubic,
-                      width: i == _focusIndex ? focusedWidth : otherWidth,
-                      child: _NotionBottomNavButton(
-                        item: widget.items[i],
-                        selected: i == widget.selectedIndex,
-                        focused: i == _focusIndex,
-                        pressed: i == _pressedIndex,
-                        onTap: () => widget.onSelected(i),
-                        onHoverChanged: (value) =>
-                            setState(() => _hoveredIndex = value ? i : null),
-                        onPressedChanged: (value) =>
-                            setState(() => _pressedIndex = value ? i : null),
-                      ),
-                    ),
-                ],
-              );
-            },
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < count; i++)
+                Expanded(
+                  // No fixed pixel widths here. This avoids RenderFlex overflow
+                  // on Flutter Web while still making the focused tab feel wider.
+                  flex: i == _focusIndex ? 132 : 92,
+                  child: _NotionBottomNavButton(
+                    item: widget.items[i],
+                    selected: i == widget.selectedIndex,
+                    focused: i == _focusIndex,
+                    pressed: i == _pressedIndex,
+                    onTap: () => widget.onSelected(i),
+                    onHoverChanged: (value) {
+                      if (!mounted) return;
+                      setState(() => _hoveredIndex = value ? i : null);
+                    },
+                    onPressedChanged: (value) {
+                      if (!mounted) return;
+                      setState(() => _pressedIndex = value ? i : null);
+                    },
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -214,7 +211,10 @@ class _NotionBottomNavButton extends StatelessWidget {
 
     return MouseRegion(
       onEnter: (_) => onHoverChanged(true),
-      onExit: (_) => onHoverChanged(false),
+      onExit: (_) {
+        onHoverChanged(false);
+        onPressedChanged(false);
+      },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
@@ -226,33 +226,32 @@ class _NotionBottomNavButton extends StatelessWidget {
           selected: selected,
           label: item.label,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
+            duration: const Duration(milliseconds: 140),
             curve: Curves.easeOut,
-            color: selected ? AppColors.hover : AppColors.surface,
+            color: selected
+                ? AppColors.hover
+                : (focused || pressed ? AppColors.hover : AppColors.surface),
             child: Stack(
               fit: StackFit.expand,
               children: [
                 Positioned(
                   top: 0,
-                  left: 16,
-                  right: 16,
+                  left: 0,
+                  right: 0,
                   child: AnimatedOpacity(
-                    duration: const Duration(milliseconds: 150),
+                    duration: const Duration(milliseconds: 140),
                     opacity: selected ? 1 : 0,
-                    child: Container(
+                    child: const SizedBox(
                       height: 2,
-                      decoration: BoxDecoration(
-                        color: AppColors.ink,
-                        borderRadius: BorderRadius.circular(99),
-                      ),
+                      child: ColoredBox(color: AppColors.ink),
                     ),
                   ),
                 ),
                 Center(
                   child: AnimatedScale(
-                    duration: const Duration(milliseconds: 180),
+                    duration: const Duration(milliseconds: 170),
                     curve: Curves.easeOutCubic,
-                    scale: showLabel ? 1.05 : 1,
+                    scale: showLabel ? 1.04 : 1,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -262,23 +261,28 @@ class _NotionBottomNavButton extends StatelessWidget {
                           size: showLabel ? 21.5 : 21,
                         ),
                         AnimatedSize(
-                          duration: const Duration(milliseconds: 150),
+                          duration: const Duration(milliseconds: 140),
                           curve: Curves.easeOut,
+                          alignment: Alignment.topCenter,
                           child: showLabel
                               ? Padding(
                                   padding: const EdgeInsets.only(top: 3),
-                                  child: Text(
-                                    item.label,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.fade,
-                                    softWrap: false,
-                                    style: TextStyle(
-                                      color: color,
-                                      fontSize: 10.5,
-                                      height: 1,
-                                      fontWeight: selected
-                                          ? FontWeight.w900
-                                          : FontWeight.w700,
+                                  child: ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 84),
+                                    child: Text(
+                                      item.label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.fade,
+                                      softWrap: false,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: color,
+                                        fontSize: 10.5,
+                                        height: 1,
+                                        fontWeight: selected
+                                            ? FontWeight.w900
+                                            : FontWeight.w700,
+                                      ),
                                     ),
                                   ),
                                 )

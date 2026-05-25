@@ -55,8 +55,8 @@ class _HomeShellState extends State<HomeShell> {
         final pages = <Widget>[
           WorkspaceHubPage(workspaceController: _workspaceController),
           TasksPage(workspace: workspace),
-          const MessagesPage(),
-          const PeoplePage(),
+          MessagesPage(onWorkspaceOpened: _openWorkspaceFromMessage),
+          PeoplePage(onWorkspaceOpened: _openWorkspaceFromMessage),
           ProfilePage(authController: widget.authController),
         ];
 
@@ -122,6 +122,12 @@ class _HomeShellState extends State<HomeShell> {
         3 => 'People',
         _ => 'Profile',
       };
+
+  Future<void> _openWorkspaceFromMessage(Workspace workspace) async {
+    await _workspaceController.openWorkspace(workspace);
+    if (!mounted) return;
+    setState(() => _tab = 0);
+  }
 
   Future<void> _showWorkspaceMenu(BuildContext context) async {
     final workspace = _workspaceController.selected;
@@ -419,15 +425,40 @@ class _HomeShellState extends State<HomeShell> {
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
                         final member = _workspaceController.members[index];
+                        final canManageMember = workspace.canManageMembers &&
+                            !member.isOwner &&
+                            !member.isCurrentUser;
+
                         return NotionListTile(
-                          leading: AppAvatar(name: member.fullName, radius: 22),
+                          onTap: canManageMember
+                              ? () => _showMemberActions(context, member)
+                              : null,
+                          leading: AppAvatar(
+                            name: member.fullName,
+                            imageUrl: member.avatarUrl,
+                            radius: 22,
+                          ),
                           title: member.fullName,
-                          subtitle: member.email,
-                          trailing: Text(
-                            member.isOwner ? 'Owner' : member.role,
-                            style: const TextStyle(
-                                color: AppColors.muted,
-                                fontWeight: FontWeight.w800),
+                          subtitle: [
+                            if (member.userName.isNotEmpty) '@${member.userName}',
+                            if (member.email.isNotEmpty) member.email,
+                          ].join(' · '),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _RoleChip(
+                                label: member.isOwner
+                                    ? 'Owner'
+                                    : _roleLabel(member.role),
+                              ),
+                              if (canManageMember) ...[
+                                const SizedBox(width: 6),
+                                const Icon(
+                                  Icons.more_horiz_rounded,
+                                  color: AppColors.muted,
+                                ),
+                              ],
+                            ],
                           ),
                         );
                       },
@@ -438,6 +469,88 @@ class _HomeShellState extends State<HomeShell> {
       ),
     );
   }
+
+  Future<void> _showMemberActions(
+    BuildContext context,
+    WorkspaceMember member,
+  ) async {
+    final action = await NotionBottomSheet.show<String>(
+      context: context,
+      title: member.fullName,
+      subtitle: member.email.isEmpty ? 'Member actions' : member.email,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final role in const ['viewer', 'member', 'manager'])
+            NotionActionRow(
+              icon: _roleIcon(role),
+              title: _roleLabel(role),
+              subtitle: member.role.toLowerCase() == role
+                  ? 'Current role'
+                  : 'Change role to ${_roleLabel(role).toLowerCase()}',
+              enabled: member.role.toLowerCase() != role,
+              trailing: member.role.toLowerCase() == role
+                  ? const Icon(Icons.check_rounded, color: AppColors.ink)
+                  : null,
+              onTap: () => Navigator.pop(context, 'role:$role'),
+            ),
+          const Divider(height: 18),
+          NotionActionRow(
+            icon: Icons.remove_circle_outline,
+            title: 'Remove from workspace',
+            subtitle: 'Kick this member out of the workspace.',
+            danger: true,
+            onTap: () => Navigator.pop(context, 'remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (action == null) return;
+
+    if (action.startsWith('role:')) {
+      final role = action.substring('role:'.length);
+      await _workspaceController.changeRole(member, role);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Changed ${member.fullName} to ${_roleLabel(role)}.')),
+      );
+      return;
+    }
+
+    if (action == 'remove') {
+      final confirmed = await NotionConfirmDialog.show(
+        context: context,
+        title: 'Remove member?',
+        message: '${member.fullName} will lose access to this workspace.',
+        confirmLabel: 'Remove',
+        danger: true,
+      );
+
+      if (!confirmed) return;
+
+      await _workspaceController.removeMember(member);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed ${member.fullName}.')),
+      );
+    }
+  }
+
+  String _roleLabel(String role) => switch (role.toLowerCase()) {
+        'owner' => 'Owner',
+        'manager' => 'Manager',
+        'member' => 'Member',
+        'viewer' => 'Viewer',
+        _ => role.isEmpty ? 'Member' : role,
+      };
+
+  IconData _roleIcon(String role) => switch (role.toLowerCase()) {
+        'manager' => Icons.admin_panel_settings,
+        'member' => Icons.edit_note_rounded,
+        'viewer' => Icons.visibility_outlined,
+        _ => Icons.verified_user,
+      };
 
   Future<void> _showWorkspaceSettings(BuildContext context) async {
     final workspace = _workspaceController.selected;
@@ -598,3 +711,32 @@ class _WorkspaceMark extends StatelessWidget {
     );
   }
 }
+
+
+class _RoleChip extends StatelessWidget {
+  const _RoleChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 28),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.hover,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: AppColors.muted,
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+

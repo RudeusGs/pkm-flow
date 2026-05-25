@@ -85,6 +85,97 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> _changePassword() async {
+    final currentPassword = TextEditingController();
+    final newPassword = TextEditingController();
+    final confirmPassword = TextEditingController();
+
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            20, 0, 20, MediaQuery.viewInsetsOf(context).bottom + 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const BottomSheetHeader(
+              title: 'Change password',
+              subtitle: 'Update the password used for this account.',
+            ),
+            NotionTextField(
+              controller: currentPassword,
+              autofocus: true,
+              obscureText: true,
+              labelText: 'Current password',
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 10),
+            NotionTextField(
+              controller: newPassword,
+              obscureText: true,
+              labelText: 'New password',
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 10),
+            NotionTextField(
+              controller: confirmPassword,
+              obscureText: true,
+              labelText: 'Confirm new password',
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => Navigator.pop(context, true),
+            ),
+            const SizedBox(height: 18),
+            NotionButton(
+              label: 'Update password',
+              icon: Icons.lock_reset_rounded,
+              expanded: true,
+              onPressed: () => Navigator.pop(context, true),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (ok != true) return;
+
+    final current = currentPassword.text;
+    final next = newPassword.text;
+    final confirm = confirmPassword.text;
+
+    if (current.trim().isEmpty || next.trim().isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter both current and new password.')),
+      );
+      return;
+    }
+
+    if (next != confirm) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('New password confirmation does not match.')),
+      );
+      return;
+    }
+
+    final saved = await widget.authController.changePassword(
+      currentPassword: current,
+      newPassword: next,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(saved
+            ? 'Password updated.'
+            : widget.authController.error ?? 'Could not update password.'),
+      ),
+    );
+  }
+
   Future<void> _confirmLogout() async {
     final confirmed = await NotionConfirmDialog.show(
       context: context,
@@ -199,13 +290,11 @@ class _ProfilePageState extends State<ProfilePage> {
               onTap: _editProfile,
             ),
             const SizedBox(height: 10),
-            const NotionActionTile(
+            NotionActionTile(
               icon: Icons.lock_outline_rounded,
               title: 'Security',
-              subtitle:
-                  'Password changes need a backend endpoint before this can be enabled.',
-              trailing:
-                  Icon(Icons.lock_outline_rounded, color: AppColors.subtle),
+              subtitle: 'Change your account password.',
+              onTap: widget.authController.isBusy ? null : _changePassword,
             ),
             const SizedBox(height: 10),
             NotionActionTile(
