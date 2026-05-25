@@ -154,12 +154,31 @@ class AppTheme {
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
-        style: IconButton.styleFrom(
-          minimumSize: const Size(44, 44),
-          foregroundColor: AppColors.ink,
-          disabledForegroundColor: AppColors.subtle,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
+          foregroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.disabled)) return AppColors.subtle;
+            if (states.contains(WidgetState.selected)) {
+              return AppColors.background;
+            }
+            return AppColors.ink;
+          }),
+          iconColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.disabled)) return AppColors.subtle;
+            if (states.contains(WidgetState.selected)) {
+              return AppColors.background;
+            }
+            return AppColors.ink;
+          }),
+          backgroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.disabled)) return AppColors.hover;
+            if (states.contains(WidgetState.selected)) return AppColors.ink;
+            return Colors.transparent;
+          }),
+          overlayColor: WidgetStatePropertyAll(AppColors.hover.withOpacity(.65)),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(

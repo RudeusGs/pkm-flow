@@ -154,15 +154,37 @@ class TasksController extends ChangeNotifier {
     }
   }
 
-  Future<void> changeStatus(WorkTask task, String status) async {
+  bool canChangeStatus(WorkTask task, String? currentUserId) {
+    final latest = taskById(task.id) ?? task;
+    return latest.canChangeStatusBy(currentUserId);
+  }
+
+  Future<bool> changeStatus(
+    WorkTask task,
+    String status, {
+    String? currentUserId,
+  }) async {
+    final latest = taskById(task.id) ?? task;
+    final nextStatus = normalizeTaskStatus(status);
+
+    if (latest.status == nextStatus) return true;
+
+    if (!latest.canChangeStatusBy(currentUserId)) {
+      error = latest.statusLockReason(currentUserId);
+      notifyListeners();
+      return false;
+    }
+
     try {
-      final updated = await _repository.changeStatus(task.id, status);
+      final updated = await _repository.changeStatus(latest.id, nextStatus);
       _replaceTask(updated);
       error = null;
+      notifyListeners();
+      return true;
     } catch (err) {
       error = _friendlyError(err);
-    } finally {
       notifyListeners();
+      return false;
     }
   }
 

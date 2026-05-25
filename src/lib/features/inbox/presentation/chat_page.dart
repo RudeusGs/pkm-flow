@@ -8,6 +8,8 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/json_utils.dart';
 import '../../../core/utils/image_url.dart';
 import '../../../shared/widgets/app_avatar.dart';
+import '../../../shared/widgets/app_feedback.dart';
+import '../../../shared/widgets/app_icon_button.dart';
 import '../../workspaces/domain/workspace.dart';
 import '../domain/inbox_models.dart';
 import 'inbox_controller.dart';
@@ -62,9 +64,7 @@ class _ChatPageState extends State<ChatPage> {
     if (!mounted) return;
 
     if (bytes.length > _maxImageBytes) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ảnh tối đa 8MB. Chọn ảnh nhẹ hơn nha.')),
-      );
+      AppSnackBar.warning(context, 'Ảnh tối đa 8MB. Chọn ảnh nhẹ hơn nha.');
       return;
     }
 
@@ -109,9 +109,7 @@ class _ChatPageState extends State<ChatPage> {
       _scrollToBottom();
     } catch (err) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(err.toString())),
-      );
+      AppSnackBar.error(context, err);
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -213,10 +211,9 @@ class _ChatPageState extends State<ChatPage> {
                                       return;
                                     }
 
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Opened "${workspace.name}".'),
-                                      ),
+                                    AppSnackBar.success(
+                                      context,
+                                      'Đã mở workspace "${workspace.name}".',
                                     );
                                   },
                           );
@@ -250,11 +247,13 @@ class _ChatPageState extends State<ChatPage> {
                         ),
                       Row(
                         children: [
-                          IconButton(
+                          AppIconButton(
                             tooltip: 'Gửi ảnh',
+                            tone: AppIconButtonTone.secondary,
                             onPressed: _sending ? null : _pickImage,
-                            icon: const Icon(Icons.image_outlined),
+                            icon: Icons.image_outlined,
                           ),
+                          const SizedBox(width: 8),
                           Expanded(
                             child: TextField(
                               controller: _text,
@@ -271,15 +270,16 @@ class _ChatPageState extends State<ChatPage> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          IconButton.filled(
-                            onPressed: _sending || widget.controller.isSendingMessage
-                                ? null
-                                : _send,
-                            icon: _sending || widget.controller.isSendingMessage
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2))
-                                : const Icon(Icons.send_rounded),
+                          AppIconButton(
+                            tooltip: 'Gửi tin nhắn',
+                            tone: AppIconButtonTone.primary,
+                            isLoading:
+                                _sending || widget.controller.isSendingMessage,
+                            onPressed:
+                                _sending || widget.controller.isSendingMessage
+                                    ? null
+                                    : _send,
+                            icon: Icons.send_rounded,
                           ),
                         ],
                       ),
@@ -334,10 +334,13 @@ class _SelectedImagePreview extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
+          AppIconButton(
             tooltip: 'Bỏ ảnh',
+            tone: AppIconButtonTone.ghost,
             onPressed: onClear,
-            icon: const Icon(Icons.close_rounded),
+            icon: Icons.close_rounded,
+            size: 38,
+            iconSize: 19,
           ),
         ],
       ),

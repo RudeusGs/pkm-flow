@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../app/app_scope.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/app_avatar.dart';
+import '../../../shared/widgets/app_feedback.dart';
+import '../../../shared/widgets/app_icon_button.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/notion_widgets.dart';
 import '../../activity_logs/data/activity_log_repository.dart';
@@ -87,10 +89,12 @@ class _HomeShellState extends State<HomeShell> {
             onTitleTap: () => setState(() => _tab = 0),
             actions: [
               const NotificationBell(),
-              IconButton(
+              AppIconButton(
                 tooltip: 'Workspace menu',
+                tone: AppIconButtonTone.ghost,
                 onPressed: () => _showWorkspaceMenu(context),
-                icon: const Icon(Icons.more_horiz_rounded),
+                icon: Icons.more_horiz_rounded,
+                size: 42,
               ),
             ],
           ),
@@ -153,15 +157,11 @@ class _HomeShellState extends State<HomeShell> {
     try {
       await _workspaceController.acceptInvitation(token);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Workspace invitation accepted.')),
-      );
+      AppSnackBar.success(context, 'Đã tham gia workspace.');
       setState(() => _tab = 0);
     } catch (err) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Không thao tác được.')),
-      );
+      AppSnackBar.error(context, err);
     }
   }
 
@@ -180,76 +180,68 @@ class _HomeShellState extends State<HomeShell> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          NotionActionRow(
-            icon: Icons.send_outlined,
-            title: 'Share workspace via message',
-            subtitle: workspace == null
-                ? 'Create a workspace first.'
-                : workspace.canManageMembersEffective
-                    ? 'Send a workspace card to a chat.'
-                    : 'Không có quyền thực hiện thao tác này.',
-            enabled: workspace?.canManageMembersEffective == true,
-            onTap: () {
-              Navigator.pop(context);
-              _showShareWorkspaceMessage(context, workspace!);
-            },
-          ),
-          NotionActionRow(
-            icon: Icons.alternate_email_rounded,
-            title: 'Invite member by email/Gmail',
-            subtitle: workspace == null
-                ? 'Create a workspace first.'
-                : workspace.canManageMembersEffective
-                    ? 'Invite someone with a role.'
-                    : 'Không có quyền thực hiện thao tác này.',
-            enabled: workspace?.canManageMembersEffective == true,
-            onTap: () {
-              Navigator.pop(context);
-              _showInviteEmail(context);
-            },
-          ),
-          NotionActionRow(
-            icon: Icons.settings_outlined,
-            title: 'Workspace settings',
-            enabled: workspace != null,
-            onTap: () {
-              Navigator.pop(context);
-              _showWorkspaceSettings(context);
-            },
-          ),
-          NotionActionRow(
-            icon: Icons.groups_2_outlined,
-            title: 'Members',
-            enabled: workspace != null,
-            onTap: () {
-              Navigator.pop(context);
-              if (workspace != null) _showMembers(context, workspace);
-            },
-          ),
-          NotionActionRow(
-            icon: Icons.history_rounded,
-            title: 'Activity log',
-            subtitle: workspace == null
-                ? 'Create a workspace first.'
-                : 'See who changed what in this workspace.',
-            enabled: workspace != null,
-            onTap: () {
-              Navigator.pop(context);
-              if (workspace != null) _openActivityLog(context, workspace);
-            },
-          ),
-          NotionActionRow(
-            icon: Icons.delete_outline_rounded,
-            title: 'Trash',
-            subtitle: workspace == null
-                ? 'Create a workspace first.'
-                : 'Restore pages moved to Trash.',
-            enabled: workspace != null,
-            onTap: () {
-              Navigator.pop(context);
-              if (workspace != null) _openWorkspaceTrash(context, workspace);
-            },
-          ),
+          if (workspace != null && workspace.canManageMembersEffective) ...[
+            NotionActionRow(
+              icon: Icons.send_outlined,
+              title: 'Share workspace via message',
+              subtitle: 'Send a workspace card to a chat.',
+              onTap: () {
+                Navigator.pop(context);
+                _showShareWorkspaceMessage(context, workspace);
+              },
+            ),
+            NotionActionRow(
+              icon: Icons.alternate_email_rounded,
+              title: 'Invite member by email/Gmail',
+              subtitle: 'Invite someone with a role.',
+              onTap: () {
+                Navigator.pop(context);
+                _showInviteEmail(context);
+              },
+            ),
+          ],
+          if (workspace != null)
+            NotionActionRow(
+              icon: Icons.settings_outlined,
+              title: 'Workspace settings',
+              subtitle: workspace.canManageSettingsEffective
+                  ? 'Rename and configure visibility.'
+                  : 'View workspace info.',
+              onTap: () {
+                Navigator.pop(context);
+                _showWorkspaceSettings(context);
+              },
+            ),
+          if (workspace != null)
+            NotionActionRow(
+              icon: Icons.groups_2_outlined,
+              title: 'Members',
+              subtitle: 'View people in this workspace.',
+              onTap: () {
+                Navigator.pop(context);
+                _showMembers(context, workspace);
+              },
+            ),
+          if (workspace != null)
+            NotionActionRow(
+              icon: Icons.history_rounded,
+              title: 'Activity log',
+              subtitle: 'See who changed what in this workspace.',
+              onTap: () {
+                Navigator.pop(context);
+                _openActivityLog(context, workspace);
+              },
+            ),
+          if (workspace != null)
+            NotionActionRow(
+              icon: Icons.delete_outline_rounded,
+              title: 'Trash',
+              subtitle: 'Restore pages moved to Trash.',
+              onTap: () {
+                Navigator.pop(context);
+                _openWorkspaceTrash(context, workspace);
+              },
+            ),
           if (workspace != null && workspace.canDeleteWorkspaceEffective)
             NotionActionRow(
               icon: Icons.delete_forever_rounded,
@@ -395,14 +387,10 @@ class _HomeShellState extends State<HomeShell> {
         await _workspaceController.inviteByEmail(
             email: email.text.trim(), role: role);
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invite email sent.')),
-        );
+        AppSnackBar.success(context, 'Đã gửi lời mời.');
       } catch (err) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
-        );
+        AppSnackBar.error(context, _workspaceController.error);
       }
     }
   }
@@ -425,9 +413,7 @@ class _HomeShellState extends State<HomeShell> {
     } catch (err) {
       inbox.dispose();
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Không thao tác được.')),
-      );
+      AppSnackBar.error(context, err);
       return;
     }
 
@@ -514,18 +500,14 @@ class _HomeShellState extends State<HomeShell> {
                                   );
                                   if (!context.mounted) return;
                                   Navigator.pop(context);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                          'Workspace shared with ${friend.fullName}.'),
-                                    ),
+                                  AppSnackBar.success(
+                                    context,
+                                    'Đã gửi workspace cho ${friend.fullName}.',
                                   );
                                 } catch (err) {
                                   if (!context.mounted) return;
                                   setSheetState(() => sendingUserId = null);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Không thao tác được.')),
-                                  );
+                                  AppSnackBar.error(context, err);
                                 }
                               },
                               leading: AppAvatar(
@@ -594,17 +576,18 @@ class _HomeShellState extends State<HomeShell> {
                   title: 'Members',
                   subtitle: workspace.canManageMembersEffective
                       ? 'Bấm nút 3 chấm cạnh member để đổi quyền hoặc xóa khỏi workspace.'
-                      : 'Bạn đang không có quyền quản lý member trong workspace này.',
+                      : 'Danh sách thành viên trong workspace.',
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                child: _MemberPermissionNotice(
-                  canManage: workspace.canManageMembersEffective,
-                  count: _workspaceController.members.length,
-                  workspaceName: workspace.name,
+              if (workspace.canManageMembersEffective)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: _MemberPermissionNotice(
+                    canManage: true,
+                    count: _workspaceController.members.length,
+                    workspaceName: workspace.name,
+                  ),
                 ),
-              ),
               Expanded(
                 child: _workspaceController.members.isEmpty
                     ? const EmptyState(
@@ -694,16 +677,13 @@ class _HomeShellState extends State<HomeShell> {
         await _workspaceController.changeRole(member, role);
         await _workspaceController.loadMembers(silent: true);
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Đã đổi ${member.fullName} thành ${_roleLabel(role)}.'),
-          ),
+        AppSnackBar.success(
+          context,
+          'Đã đổi ${member.fullName} thành ${_roleLabel(role)}.',
         );
       } catch (err) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
-        );
+        AppSnackBar.error(context, _workspaceController.error);
       }
       return;
     }
@@ -723,14 +703,10 @@ class _HomeShellState extends State<HomeShell> {
         await _workspaceController.removeMember(member);
         await _workspaceController.loadMembers(silent: true);
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Removed ${member.fullName}.')),
-        );
+        AppSnackBar.success(context, 'Đã xóa ${member.fullName}.');
       } catch (err) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
-        );
+        AppSnackBar.error(context, _workspaceController.error);
       }
     }
   }
@@ -779,45 +755,53 @@ class _HomeShellState extends State<HomeShell> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const BottomSheetHeader(title: 'Workspace settings'),
-              NotionTextField(controller: name, labelText: 'Workspace name'),
+              BottomSheetHeader(
+                title: 'Workspace settings',
+                subtitle: workspace.canManageSettingsEffective
+                    ? 'Chỉnh tên, mô tả và chế độ hiển thị.'
+                    : 'Thông tin workspace.',
+              ),
+              NotionTextField(
+                controller: name,
+                labelText: 'Workspace name',
+                readOnly: !workspace.canManageSettingsEffective,
+              ),
               const SizedBox(height: 10),
               NotionTextField(
                 controller: description,
                 labelText: 'Description',
                 minLines: 2,
                 maxLines: 4,
+                readOnly: !workspace.canManageSettingsEffective,
               ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  NotionPill(
-                    label: 'Private',
-                    icon: Icons.lock_outline_rounded,
-                    selected: visibility == 'private',
-                    onTap: () => setSheetState(() => visibility = 'private'),
-                  ),
-                  NotionPill(
-                    label: 'Public',
-                    icon: Icons.public_rounded,
-                    selected: visibility == 'public',
-                    onTap: () => setSheetState(() => visibility = 'public'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              NotionButton(
-                label: workspace.canManageSettingsEffective
-                    ? 'Save changes'
-                    : 'Không có quyền chỉnh sửa',
-                icon: Icons.done_rounded,
-                expanded: true,
-                onPressed: workspace.canManageSettingsEffective
-                    ? () => Navigator.pop(context, 'save')
-                    : null,
-              ),
+              if (workspace.canManageSettingsEffective) ...[
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    NotionPill(
+                      label: 'Private',
+                      icon: Icons.lock_outline_rounded,
+                      selected: visibility == 'private',
+                      onTap: () => setSheetState(() => visibility = 'private'),
+                    ),
+                    NotionPill(
+                      label: 'Public',
+                      icon: Icons.public_rounded,
+                      selected: visibility == 'public',
+                      onTap: () => setSheetState(() => visibility = 'public'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                NotionButton(
+                  label: 'Save changes',
+                  icon: Icons.done_rounded,
+                  expanded: true,
+                  onPressed: () => Navigator.pop(context, 'save'),
+                ),
+              ],
               if (!workspace.canDeleteWorkspaceEffective) ...[
                 const SizedBox(height: 10),
                 NotionButton(
@@ -852,14 +836,10 @@ class _HomeShellState extends State<HomeShell> {
           visibility: visibility,
         );
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Workspace saved.')),
-        );
+        AppSnackBar.success(context, 'Đã lưu workspace.');
       } catch (err) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
-        );
+        AppSnackBar.error(context, _workspaceController.error);
       }
       return;
     }
@@ -879,9 +859,7 @@ class _HomeShellState extends State<HomeShell> {
         if (mounted) setState(() => _tab = 0);
       } catch (err) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_workspaceController.error ?? 'Không thao tác được.')),
-        );
+        AppSnackBar.error(context, _workspaceController.error);
       }
       return;
     }
@@ -897,9 +875,7 @@ class _HomeShellState extends State<HomeShell> {
     if (workspace == null) return;
 
     if (!workspace.canDeleteWorkspaceEffective) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Không có quyền thực hiện thao tác này.')),
-      );
+      AppSnackBar.error(context, 'Không có quyền thực hiện thao tác này.');
       return;
     }
 
@@ -916,18 +892,11 @@ class _HomeShellState extends State<HomeShell> {
     try {
       await _workspaceController.deleteSelected();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã xóa workspace.')),
-      );
+      AppSnackBar.success(context, 'Đã xóa workspace.');
       setState(() => _tab = 0);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text(_workspaceController.error ?? 'Không thao tác được.'),
-        ),
-      );
+      AppSnackBar.error(context, _workspaceController.error);
     }
   }
 
@@ -1062,20 +1031,13 @@ class _MemberTile extends StatelessWidget {
             _RoleChip(label: roleLabel, icon: roleIcon),
             const SizedBox(width: 4),
             if (canManage)
-              IconButton(
+              AppIconButton(
                 tooltip: 'Đổi quyền member',
+                tone: AppIconButtonTone.ghost,
                 onPressed: onTap,
-                icon: const Icon(Icons.more_horiz_rounded, color: AppColors.muted),
-              )
-            else
-              Icon(
-                member.isOwner
-                    ? Icons.workspace_premium_rounded
-                    : member.isCurrentUser
-                        ? Icons.person_pin_circle_outlined
-                        : Icons.lock_outline_rounded,
-                color: AppColors.subtle,
-                size: 20,
+                icon: Icons.more_horiz_rounded,
+                size: 38,
+                iconSize: 20,
               ),
           ],
         ),
@@ -1132,28 +1094,63 @@ class _WorkspaceMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final trimmed = name.trim();
-    final initial =
-        trimmed.isEmpty ? 'B' : trimmed.characters.first.toUpperCase();
+    final initial = _normalizeInitial(trimmed.isEmpty ? 'B' : trimmed.characters.first);
 
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(11),
-        border: Border.all(color: AppColors.line),
-      ),
-      child: Center(
-        child: Text(
-          initial,
-          style: const TextStyle(
-            color: AppColors.ink,
-            fontSize: 15,
-            fontWeight: FontWeight.w900,
+    return SizedBox.square(
+      dimension: 40,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Center(
+          child: Text(
+            initial,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: AppColors.ink,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              height: 1,
+            ),
           ),
         ),
       ),
     );
+  }
+
+  String _normalizeInitial(String value) {
+    const map = {
+      'à': 'A', 'á': 'A', 'ạ': 'A', 'ả': 'A', 'ã': 'A',
+      'â': 'A', 'ầ': 'A', 'ấ': 'A', 'ậ': 'A', 'ẩ': 'A', 'ẫ': 'A',
+      'ă': 'A', 'ằ': 'A', 'ắ': 'A', 'ặ': 'A', 'ẳ': 'A', 'ẵ': 'A',
+      'è': 'E', 'é': 'E', 'ẹ': 'E', 'ẻ': 'E', 'ẽ': 'E',
+      'ê': 'E', 'ề': 'E', 'ế': 'E', 'ệ': 'E', 'ể': 'E', 'ễ': 'E',
+      'ì': 'I', 'í': 'I', 'ị': 'I', 'ỉ': 'I', 'ĩ': 'I',
+      'ò': 'O', 'ó': 'O', 'ọ': 'O', 'ỏ': 'O', 'õ': 'O',
+      'ô': 'O', 'ồ': 'O', 'ố': 'O', 'ộ': 'O', 'ổ': 'O', 'ỗ': 'O',
+      'ơ': 'O', 'ờ': 'O', 'ớ': 'O', 'ợ': 'O', 'ở': 'O', 'ỡ': 'O',
+      'ù': 'U', 'ú': 'U', 'ụ': 'U', 'ủ': 'U', 'ũ': 'U',
+      'ư': 'U', 'ừ': 'U', 'ứ': 'U', 'ự': 'U', 'ử': 'U', 'ữ': 'U',
+      'ỳ': 'Y', 'ý': 'Y', 'ỵ': 'Y', 'ỷ': 'Y', 'ỹ': 'Y',
+      'đ': 'D',
+      'À': 'A', 'Á': 'A', 'Ạ': 'A', 'Ả': 'A', 'Ã': 'A',
+      'Â': 'A', 'Ầ': 'A', 'Ấ': 'A', 'Ậ': 'A', 'Ẩ': 'A', 'Ẫ': 'A',
+      'Ă': 'A', 'Ằ': 'A', 'Ắ': 'A', 'Ặ': 'A', 'Ẳ': 'A', 'Ẵ': 'A',
+      'È': 'E', 'É': 'E', 'Ẹ': 'E', 'Ẻ': 'E', 'Ẽ': 'E',
+      'Ê': 'E', 'Ề': 'E', 'Ế': 'E', 'Ệ': 'E', 'Ể': 'E', 'Ễ': 'E',
+      'Ì': 'I', 'Í': 'I', 'Ị': 'I', 'Ỉ': 'I', 'Ĩ': 'I',
+      'Ò': 'O', 'Ó': 'O', 'Ọ': 'O', 'Ỏ': 'O', 'Õ': 'O',
+      'Ô': 'O', 'Ồ': 'O', 'Ố': 'O', 'Ộ': 'O', 'Ổ': 'O', 'Ỗ': 'O',
+      'Ơ': 'O', 'Ờ': 'O', 'Ớ': 'O', 'Ợ': 'O', 'Ở': 'O', 'Ỡ': 'O',
+      'Ù': 'U', 'Ú': 'U', 'Ụ': 'U', 'Ủ': 'U', 'Ũ': 'U',
+      'Ư': 'U', 'Ừ': 'U', 'Ứ': 'U', 'Ự': 'U', 'Ử': 'U', 'Ữ': 'U',
+      'Ỳ': 'Y', 'Ý': 'Y', 'Ỵ': 'Y', 'Ỷ': 'Y', 'Ỹ': 'Y',
+      'Đ': 'D',
+    };
+
+    return map[value] ?? value.toUpperCase();
   }
 }
 

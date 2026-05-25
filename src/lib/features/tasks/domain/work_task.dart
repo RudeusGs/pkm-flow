@@ -29,6 +29,14 @@ double asDouble(Object? value, [double fallback = 0]) {
   return double.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
+String _normalizeUserId(Object? value) => value?.toString().trim().toLowerCase() ?? '';
+
+bool _sameUserId(Object? left, Object? right) {
+  final a = _normalizeUserId(left);
+  final b = _normalizeUserId(right);
+  return a.isNotEmpty && b.isNotEmpty && a == b;
+}
+
 List<String> _parseAssigneeUserIds(Object? value) {
   if (value is! List) return const <String>[];
 
@@ -58,6 +66,10 @@ class WorkTask {
     this.status = 'todo',
     this.priority = 'medium',
     this.dueDate,
+    this.createdById = '',
+    this.lastModifiedById,
+    this.createdDate,
+    this.updatedDate,
     this.assigneeUserIds = const <String>[],
   });
 
@@ -69,10 +81,43 @@ class WorkTask {
   final String status;
   final String priority;
   final String? dueDate;
+  final String createdById;
+  final String? lastModifiedById;
+  final String? createdDate;
+  final String? updatedDate;
   final List<String> assigneeUserIds;
 
   bool get isDone => status == 'done';
   bool get hasAssignees => assigneeUserIds.isNotEmpty;
+
+  bool isAssignedTo(String? userId) {
+    final id = _normalizeUserId(userId);
+    if (id.isEmpty) return false;
+    return assigneeUserIds.any((assigneeId) => _sameUserId(assigneeId, id));
+  }
+
+  bool isCreatedBy(String? userId) => _sameUserId(createdById, userId);
+
+  bool isMineForStatus(String? userId) {
+    final id = _normalizeUserId(userId);
+    if (id.isEmpty) return false;
+
+    // Nếu task đã được gán, chỉ assignee được đổi trạng thái.
+    if (assigneeUserIds.isNotEmpty) return isAssignedTo(id);
+
+    // Task chưa gán ai thì người tạo task được xử lý trạng thái.
+    return isCreatedBy(id);
+  }
+
+  bool canChangeStatusBy(String? userId) => !isDone && isMineForStatus(userId);
+
+  String statusLockReason(String? userId) {
+    if (isDone) return 'Task đã hoàn thành nên không thể đổi lại.';
+    if (!isMineForStatus(userId)) {
+      return 'Chỉ người được giao task mới được đổi trạng thái.';
+    }
+    return 'Không thao tác được.';
+  }
 
   WorkTask copyWith({
     String? id,
@@ -83,6 +128,10 @@ class WorkTask {
     String? status,
     String? priority,
     String? dueDate,
+    String? createdById,
+    String? lastModifiedById,
+    String? createdDate,
+    String? updatedDate,
     List<String>? assigneeUserIds,
   }) {
     return WorkTask(
@@ -94,6 +143,10 @@ class WorkTask {
       status: status ?? this.status,
       priority: priority ?? this.priority,
       dueDate: dueDate ?? this.dueDate,
+      createdById: createdById ?? this.createdById,
+      lastModifiedById: lastModifiedById ?? this.lastModifiedById,
+      createdDate: createdDate ?? this.createdDate,
+      updatedDate: updatedDate ?? this.updatedDate,
       assigneeUserIds: assigneeUserIds ?? this.assigneeUserIds,
     );
   }
@@ -107,6 +160,11 @@ class WorkTask {
         status: normalizeTaskStatus(json['status']),
         priority: normalizeTaskPriority(json['priority']),
         dueDate: json['dueDate']?.toString(),
+        createdById: asString(json['createdById'] ?? json['createdByUserId']),
+        lastModifiedById:
+            (json['lastModifiedById'] ?? json['updatedById'])?.toString(),
+        createdDate: json['createdDate']?.toString(),
+        updatedDate: json['updatedDate']?.toString(),
         assigneeUserIds: _parseAssigneeUserIds(
           json['assignees'] ?? json['assigneeUserIds'] ?? json['assignedUserIds'],
         ),

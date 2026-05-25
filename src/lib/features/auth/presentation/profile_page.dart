@@ -3,6 +3,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/app_avatar.dart';
+import '../../../shared/widgets/app_feedback.dart';
+import '../../../shared/widgets/app_icon_button.dart';
 import '../../../shared/widgets/notion_widgets.dart';
 import 'auth_controller.dart';
 
@@ -27,11 +29,10 @@ class _ProfilePageState extends State<ProfilePage> {
     if (image == null) return;
     final ok = await widget.authController.uploadAvatar(image);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text(ok
-              ? 'Avatar updated.'
-              : widget.authController.error ?? 'Không thao tác được.')),
+    AppSnackBar.show(
+      context,
+      ok ? 'Đã cập nhật avatar.' : AppSnackBar.cleanError(widget.authController.error),
+      tone: ok ? AppSnackTone.success : AppSnackTone.error,
     );
   }
 
@@ -76,11 +77,10 @@ class _ProfilePageState extends State<ProfilePage> {
       final saved =
           await widget.authController.updateProfile(fullName.text.trim());
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(saved
-                ? 'Profile saved.'
-                : widget.authController.error ?? 'Không thao tác được.')),
+      AppSnackBar.show(
+        context,
+        saved ? 'Đã lưu hồ sơ.' : AppSnackBar.cleanError(widget.authController.error),
+        tone: saved ? AppSnackTone.success : AppSnackTone.error,
       );
     }
   }
@@ -147,18 +147,13 @@ class _ProfilePageState extends State<ProfilePage> {
 
     if (current.trim().isEmpty || next.trim().isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter both current and new password.')),
-      );
+      AppSnackBar.warning(context, 'Nhập đủ mật khẩu hiện tại và mật khẩu mới.');
       return;
     }
 
     if (next != confirm) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('New password confirmation does not match.')),
-      );
+      AppSnackBar.warning(context, 'Mật khẩu xác nhận chưa khớp.');
       return;
     }
 
@@ -167,12 +162,10 @@ class _ProfilePageState extends State<ProfilePage> {
       newPassword: next,
     );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(saved
-            ? 'Password updated.'
-            : widget.authController.error ?? 'Không thao tác được.'),
-      ),
+    AppSnackBar.show(
+      context,
+      saved ? 'Đã đổi mật khẩu.' : AppSnackBar.cleanError(widget.authController.error),
+      tone: saved ? AppSnackTone.success : AppSnackTone.error,
     );
   }
 
@@ -211,11 +204,14 @@ class _ProfilePageState extends State<ProfilePage> {
                       Positioned(
                         right: -2,
                         bottom: -2,
-                        child: IconButton.filled(
+                        child: AppIconButton(
                           tooltip: 'Change avatar',
+                          tone: AppIconButtonTone.primary,
                           onPressed:
                               widget.authController.isBusy ? null : _pickAvatar,
-                          icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                          icon: Icons.camera_alt_outlined,
+                          size: 42,
+                          iconSize: 18,
                         ),
                       ),
                     ],

@@ -21,6 +21,8 @@ class InboxController extends ChangeNotifier {
   final List<VoidCallback> _unsubscribe = [];
   final Set<String> _conversationSubscriptions = <String>{};
   Timer? _debounce;
+  Timer? _conversationListSync;
+  bool _isLoadingConversations = false;
 
   List<NotificationItem> notifications = const [];
   int unreadNotifications = 0;
@@ -124,6 +126,9 @@ class InboxController extends ChangeNotifier {
   }
 
   Future<void> loadConversations({bool silent = false}) async {
+    if (_isLoadingConversations) return;
+
+    _isLoadingConversations = true;
     if (!silent) {
       isLoading = true;
       notifyListeners();
@@ -132,10 +137,12 @@ class InboxController extends ChangeNotifier {
       conversations = await _repository.conversations();
       _bindRealtime();
       await _syncConversationSubscriptions();
+      _startConversationListAutoSync();
       unawaited(_ensureRealtime());
     } catch (err) {
       error = err.toString();
     } finally {
+      _isLoadingConversations = false;
       if (!silent) isLoading = false;
       notifyListeners();
     }
@@ -266,8 +273,12 @@ class InboxController extends ChangeNotifier {
       'NotificationReadChanged',
       'NotificationUnreadCountChanged'
     ]) {
-      _unsubscribe.add(_realtime.on(
-          event, (_) => _debounced(() => loadNotifications(silent: true))));
+      _unsubscribe.add(_realtime.on(event, (_) {
+        _debounced(() async {
+          await loadNotifications(silent: true);
+          await loadConversations(silent: true);
+        });
+      }));
     }
 
     for (final event in ['ConversationUpserted', 'ConversationRead']) {
@@ -408,6 +419,15 @@ class InboxController extends ChangeNotifier {
     _debounce = Timer(const Duration(milliseconds: 250), () => action());
   }
 
+  void _startConversationListAutoSync() {
+    if (_conversationListSync?.isActive == true) return;
+
+    _conversationListSync = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (selectedConversation != null || _isLoadingConversations) return;
+      unawaited(loadConversations(silent: true));
+    });
+  }
+
   Future<void> _ensureRealtime() async {
     try {
       await _realtime.start(userInitiated: true);
@@ -422,6 +442,7 @@ class InboxController extends ChangeNotifier {
       off();
     }
     _debounce?.cancel();
+    _conversationListSync?.cancel();
     for (final id in _conversationSubscriptions) {
       _realtime.leaveConversation(id);
     }

@@ -27,6 +27,8 @@ class PagesController extends ChangeNotifier {
   Timer? _pageHeartbeat;
   Timer? _leaseRenewal;
   Timer? _debounce;
+  Timer? _pageListSync;
+  bool _isRefreshingPageList = false;
 
   String? workspaceId;
   String keyword = '';
@@ -59,6 +61,7 @@ class PagesController extends ChangeNotifier {
     notifyListeners();
 
     try {
+      unawaited(_realtime.joinWorkspace(nextWorkspaceId));
       pages = await _repository.pages(nextWorkspaceId, keyword: this.keyword);
       final currentId = selectedPage?.id;
       selectedPage = _findPage(currentId);
@@ -69,6 +72,7 @@ class PagesController extends ChangeNotifier {
         activeBlockId = null;
       }
       _bindRealtime();
+      _startPageListAutoSync();
     } catch (err) {
       error = _message(err);
     } finally {
@@ -102,8 +106,10 @@ class PagesController extends ChangeNotifier {
     notifyListeners();
 
     try {
+      unawaited(_realtime.joinWorkspace(nextWorkspaceId));
       pages = await _repository.trashPages(nextWorkspaceId);
       _bindRealtime();
+      _startPageListAutoSync();
     } catch (err) {
       error = _message(err);
     } finally {
@@ -779,16 +785,71 @@ class PagesController extends ChangeNotifier {
     });
   }
 
+  Future<void> refreshPageList({bool silent = false}) async {
+    final id = workspaceId;
+    if (id == null || _isRefreshingPageList) return;
+
+    _isRefreshingPageList = true;
+    if (!silent) {
+      isLoading = true;
+      notifyListeners();
+    }
+
+    try {
+      final nextPages = isTrashView
+          ? await _repository.trashPages(id)
+          : await _repository.pages(id, keyword: keyword);
+      pages = nextPages;
+
+      final currentId = selectedPage?.id;
+      if (currentId != null) {
+        selectedPage = pages.where((item) => item.id == currentId).firstOrNull;
+        if (selectedPage == null && blocks.isEmpty) {
+          currentRevision = 0;
+          activeBlockId = null;
+        }
+      }
+      error = null;
+    } catch (err) {
+      if (!silent) error = _message(err);
+    } finally {
+      _isRefreshingPageList = false;
+      if (!silent) isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void _startPageListAutoSync() {
+    if (_pageListSync?.isActive == true) return;
+
+    _pageListSync = Timer.periodic(const Duration(seconds: 4), (_) {
+      final id = workspaceId;
+      if (id == null || isBusy || isLoading || _isRefreshingPageList) return;
+      unawaited(_realtime.joinWorkspace(id));
+      unawaited(refreshPageList(silent: true));
+    });
+  }
+
   void _bindRealtime() {
     if (_unsubscribe.isNotEmpty) return;
 
-    for (final event in ['PageCreated', 'PageUpdated', 'PageDeleted']) {
+    for (final event in const [
+      'PageCreated',
+      'PageUpdated',
+      'PageDeleted',
+      'PageMetadataUpdated',
+      'NotificationCreated',
+      'NotificationUnreadCountChanged',
+      'WorkspaceUpdated',
+      'WorkspaceMemberAdded',
+      'WorkspaceMemberRemoved',
+      'WorkspaceMemberRoleChanged',
+    ]) {
       _unsubscribe.add(_realtime.on(event, (payload) {
         final id = workspaceId;
-        if (id != null &&
-            (payload.workspaceId == null || payload.workspaceId == id)) {
-          _debounced(() => isTrashView ? loadTrash(id) : loadPages(id));
-        }
+        if (id == null) return;
+        if (payload.workspaceId != null && payload.workspaceId != id) return;
+        _debounced(() => refreshPageList(silent: true));
       }));
     }
 
@@ -1101,6 +1162,7 @@ class PagesController extends ChangeNotifier {
       off();
     }
     _debounce?.cancel();
+    _pageListSync?.cancel();
     _pageHeartbeat?.cancel();
     _leaseRenewal?.cancel();
     if (selectedPage != null) _realtime.leavePage(selectedPage!.id);

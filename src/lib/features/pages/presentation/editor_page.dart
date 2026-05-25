@@ -5,6 +5,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/image_url.dart';
+import '../../../shared/widgets/app_feedback.dart';
+import '../../../shared/widgets/app_icon_button.dart';
 import '../../../shared/widgets/block_widgets.dart';
 import '../../../shared/widgets/notion_widgets.dart';
 import '../domain/block_item.dart';
@@ -54,9 +56,7 @@ class _EditorPageState extends State<EditorPage> {
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    AppSnackBar.show(context, message);
   }
 
   Future<void> _setCoverUrl() async {
@@ -410,16 +410,22 @@ class _CoverPreview extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton.filledTonal(
+                      AppIconButton(
                         tooltip: 'Đổi ảnh bìa',
+                        tone: AppIconButtonTone.secondary,
                         onPressed: onSetCover,
-                        icon: const Icon(Icons.image_outlined),
+                        icon: Icons.image_outlined,
+                        size: 40,
+                        iconSize: 19,
                       ),
                       const SizedBox(width: 6),
-                      IconButton.filledTonal(
+                      AppIconButton(
                         tooltip: 'Upload ảnh bìa',
+                        tone: AppIconButtonTone.primary,
                         onPressed: onUploadCover,
-                        icon: const Icon(Icons.cloud_upload_outlined),
+                        icon: Icons.cloud_upload_outlined,
+                        size: 40,
+                        iconSize: 19,
                       ),
                     ],
                   ),
@@ -969,9 +975,7 @@ class _BlockEditorTileState extends State<BlockEditorTile> {
 
   void _showError(Object err) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(err.toString())),
-    );
+    AppSnackBar.error(context, err);
   }
 }
 

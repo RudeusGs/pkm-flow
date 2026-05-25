@@ -4,6 +4,8 @@ import '../../../app/app_scope.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/json_utils.dart';
 import '../../../shared/widgets/app_avatar.dart';
+import '../../../shared/widgets/app_feedback.dart';
+import '../../../shared/widgets/app_icon_button.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/notion_widgets.dart';
 import '../../pages/domain/page_item.dart';
@@ -23,11 +25,24 @@ class TasksPage extends StatefulWidget {
 class _TasksPageState extends State<TasksPage> {
   late final TasksController _controller;
   String _filter = 'all';
+  String? _currentUserId;
 
   @override
   void initState() {
     super.initState();
     final deps = AppScope.read(context);
+    (() async {
+      var user = await deps.authRepository.cachedUser();
+      if (user == null) {
+        try {
+          user = await deps.authRepository.me();
+        } catch (_) {
+          user = null;
+        }
+      }
+      if (!mounted) return;
+      setState(() => _currentUserId = user?.id);
+    })();
     _controller = TasksController(
       repository: deps.taskRepository,
       workspaceRepository: deps.workspaceRepository,
@@ -93,36 +108,26 @@ class _TasksPageState extends State<TasksPage> {
                       ),
                     ),
                   ),
-                  IconButton.outlined(
+                  AppIconButton(
                     tooltip: 'AI suggestions',
+                    tone: AppIconButtonTone.secondary,
+                    isLoading: _controller.isGenerating,
                     onPressed:
                         _controller.isGenerating ? null : _generateSuggestions,
-                    icon: _controller.isGenerating
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.auto_awesome_rounded),
+                    icon: Icons.auto_awesome_rounded,
                   ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    tooltip: 'Create task',
-                    onPressed:
-                        workspace.canWriteEffective ? _showCreateTask : null,
-                    icon: const Icon(Icons.add_rounded),
-                  ),
+                  if (workspace.canWriteEffective) ...[
+                    const SizedBox(width: 8),
+                    AppIconButton(
+                      tooltip: 'Create task',
+                      tone: AppIconButtonTone.primary,
+                      onPressed: _showCreateTask,
+                      icon: Icons.add_rounded,
+                    ),
+                  ],
                 ],
               ),
               const SizedBox(height: 12),
-              if (!workspace.canWriteEffective)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 12),
-                  child: _InlineNotice(
-                    icon: Icons.lock_outline_rounded,
-                    message: 'Bạn chỉ có quyền xem workspace này.',
-                  ),
-                ),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
@@ -187,9 +192,9 @@ class _TasksPageState extends State<TasksPage> {
                     child: _TaskTile(
                       task: task,
                       members: _controller.members,
+                      currentUserId: _currentUserId,
                       onOpen: () => _openTaskDetails(task),
-                      onStatus: (value) =>
-                          _controller.changeStatus(task, value),
+                      onStatus: (value) => _changeTaskStatus(task, value),
                     ),
                   ),
                 ),
@@ -198,6 +203,17 @@ class _TasksPageState extends State<TasksPage> {
         );
       },
     );
+  }
+
+  Future<void> _changeTaskStatus(WorkTask task, String status) async {
+    final ok = await _controller.changeStatus(
+      task,
+      status,
+      currentUserId: _currentUserId,
+    );
+
+    if (!mounted || ok) return;
+    AppSnackBar.warning(context, _controller.error ?? task.statusLockReason(_currentUserId));
   }
 
   void _setFilter(String value) => setState(() => _filter = value);
@@ -209,9 +225,7 @@ class _TasksPageState extends State<TasksPage> {
     final pages = await deps.pageRepository.pages(workspace.id);
     if (!mounted) return;
     if (pages.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Hãy tạo page trước khi tạo task.')),
-      );
+      AppSnackBar.warning(context, 'Hãy tạo page trước khi tạo task.');
       return;
     }
 
@@ -305,19 +319,22 @@ class _TasksPageState extends State<TasksPage> {
                   ],
                 ),
                 const SizedBox(height: 14),
-                _AssigneePicker(
-                  members: _controller.members,
-                  selectedIds: selectedAssignees,
-                  enabled: workspace.canManageMembersEffective,
-                  onToggle: (member) {
-                    setSheetState(() {
-                      if (!selectedAssignees.add(member.userId)) {
-                        selectedAssignees.remove(member.userId);
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(height: 18),
+                if (workspace.canManageMembersEffective) ...[
+                  _AssigneePicker(
+                    members: _controller.members,
+                    selectedIds: selectedAssignees,
+                    currentUserId: _currentUserId,
+                    enabled: true,
+                    onToggle: (member) {
+                      setSheetState(() {
+                        if (!selectedAssignees.add(member.userId)) {
+                          selectedAssignees.remove(member.userId);
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                ],
                 NotionButton(
                   label: 'Create task',
                   icon: Icons.add_rounded,
@@ -340,11 +357,12 @@ class _TasksPageState extends State<TasksPage> {
           priority: priority,
           assigneeUserIds: selectedAssignees.toList(),
         );
+        if (mounted) {
+          AppSnackBar.success(context, 'Đã tạo task.');
+        }
       } catch (_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_controller.error ?? 'Không thao tác được.')),
-        );
+        AppSnackBar.error(context, _controller.error);
       }
     }
   }
@@ -358,6 +376,7 @@ class _TasksPageState extends State<TasksPage> {
         task: task,
         controller: _controller,
         canAssign: widget.workspace?.canManageMembersEffective == true,
+        currentUserId: _currentUserId,
       ),
     );
   }
@@ -371,16 +390,17 @@ class _TasksPageState extends State<TasksPage> {
             ? 'Chưa có gợi ý AI phù hợp.'
             : 'Đã làm mới gợi ý AI.')
         : _controller.error ?? 'Không thao tác được.';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppSnackBar.show(
+      context,
+      message,
+      tone: ok ? AppSnackTone.success : AppSnackTone.error,
+    );
   }
 
   Future<void> _showAiSettings() async {
     final current = _controller.preference;
     if (current == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('AI preference is still loading.')),
-      );
+      AppSnackBar.info(context, 'AI preference is still loading.');
       return;
     }
 
@@ -571,12 +591,10 @@ class _TasksPageState extends State<TasksPage> {
 
     final ok = await _controller.updatePreference(next);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'AI settings saved.'
-            : _controller.error ?? 'Không thao tác được.'),
-      ),
+    AppSnackBar.show(
+      context,
+      ok ? 'AI settings saved.' : AppSnackBar.cleanError(_controller.error),
+      tone: ok ? AppSnackTone.success : AppSnackTone.error,
     );
   }
 
@@ -648,8 +666,11 @@ class _TasksPageState extends State<TasksPage> {
             _ => 'Recommendation updated.',
           }
         : _controller.error ?? 'Không thao tác được.';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppSnackBar.show(
+      context,
+      message,
+      tone: ok ? AppSnackTone.success : AppSnackTone.error,
+    );
   }
 
   static String _hourLabel(int hour) => '${hour.toString().padLeft(2, '0')}:00';
@@ -679,11 +700,13 @@ class _TaskDetailSheet extends StatefulWidget {
     required this.task,
     required this.controller,
     required this.canAssign,
+    this.currentUserId,
   });
 
   final WorkTask task;
   final TasksController controller;
   final bool canAssign;
+  final String? currentUserId;
 
   @override
   State<_TaskDetailSheet> createState() => _TaskDetailSheetState();
@@ -768,42 +791,47 @@ class _TaskDetailSheetState extends State<_TaskDetailSheet> {
                           ],
                         ),
                         const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: _SheetLabel('Assignees'),
-                            ),
-                            if (!widget.canAssign)
-                              const Text(
-                                'Không có quyền gán',
-                                style: TextStyle(
-                                  color: AppColors.subtle,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                          ],
-                        ),
-                        _AssigneePicker(
-                          members: widget.controller.members,
-                          selectedIds: task.assigneeUserIds.toSet(),
-                          enabled: widget.canAssign && !widget.controller.isAssigning,
-                          onToggle: (member) async {
-                            final ok = await widget.controller.toggleAssignee(
-                              task,
-                              member,
-                            );
-                            if (!ok && mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(widget.controller.error ??
-                                      'Không thao tác được.'),
-                                ),
-                              );
-                            }
-                          },
-                        ),
+                        const _SheetLabel('Status'),
+                        const SizedBox(height: 8),
+                        if (task.canChangeStatusBy(widget.currentUserId))
+                          _TaskStatusPicker(
+                            status: task.status,
+                            onChanged: (status) => _changeStatus(task, status),
+                          )
+                        else
+                          _InlineNotice(
+                            icon: task.isDone
+                                ? Icons.lock_outline_rounded
+                                : Icons.person_off_outlined,
+                            message: task.statusLockReason(widget.currentUserId),
+                          ),
                         const SizedBox(height: 20),
+                        if (widget.canAssign || task.assigneeUserIds.isNotEmpty) ...[
+                          const _SheetLabel('Assignees'),
+                          const SizedBox(height: 8),
+                          if (widget.canAssign)
+                            _AssigneePicker(
+                              members: widget.controller.members,
+                              selectedIds: task.assigneeUserIds.toSet(),
+                              currentUserId: widget.currentUserId,
+                              enabled: !widget.controller.isAssigning,
+                              onToggle: (member) async {
+                                final ok = await widget.controller.toggleAssignee(
+                                  task,
+                                  member,
+                                );
+                                if (!ok && mounted) {
+                                  AppSnackBar.error(context, widget.controller.error);
+                                }
+                              },
+                            )
+                          else
+                            _AssigneePreview(
+                              userIds: task.assigneeUserIds,
+                              members: widget.controller.members,
+                            ),
+                          const SizedBox(height: 20),
+                        ],
                         Row(
                           children: [
                             const Expanded(
@@ -876,19 +904,14 @@ class _TaskDetailSheetState extends State<_TaskDetailSheet> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      IconButton.filled(
+                      AppIconButton(
                         tooltip: 'Send comment',
+                        tone: AppIconButtonTone.primary,
+                        isLoading: widget.controller.isSendingComment(task.id),
                         onPressed: widget.controller.isSendingComment(task.id)
                             ? null
                             : () => _sendComment(task),
-                        icon: widget.controller.isSendingComment(task.id)
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.send_rounded),
+                        icon: Icons.send_rounded,
                       ),
                     ],
                   ),
@@ -898,6 +921,20 @@ class _TaskDetailSheetState extends State<_TaskDetailSheet> {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _changeStatus(WorkTask task, String status) async {
+    final ok = await widget.controller.changeStatus(
+      task,
+      status,
+      currentUserId: widget.currentUserId,
+    );
+
+    if (!mounted || ok) return;
+    AppSnackBar.warning(
+      context,
+      widget.controller.error ?? task.statusLockReason(widget.currentUserId),
     );
   }
 
@@ -915,9 +952,7 @@ class _TaskDetailSheetState extends State<_TaskDetailSheet> {
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(widget.controller.error ?? 'Không thao tác được.')),
-    );
+    AppSnackBar.error(context, widget.controller.error);
   }
 }
 
@@ -1132,20 +1167,29 @@ class _AssigneePicker extends StatelessWidget {
     required this.selectedIds,
     required this.enabled,
     required this.onToggle,
+    this.currentUserId,
   });
 
   final List<WorkspaceMember> members;
   final Set<String> selectedIds;
   final bool enabled;
   final ValueChanged<WorkspaceMember> onToggle;
+  final String? currentUserId;
 
   @override
   Widget build(BuildContext context) {
-    final assignable = members.where((member) => member.userId.isNotEmpty).toList();
+    final me = currentUserId?.trim().toLowerCase();
+    final assignable = members.where((member) {
+      final id = member.userId.trim().toLowerCase();
+      if (id.isEmpty) return false;
+      if (member.isCurrentUser) return false;
+      if (me != null && me.isNotEmpty && id == me) return false;
+      return true;
+    }).toList();
     if (assignable.isEmpty) {
       return const _InlineNotice(
         icon: Icons.person_search_rounded,
-        message: 'Chưa tải được danh sách member trong workspace.',
+        message: 'Chưa có member khác để gán task.',
       );
     }
 
@@ -1157,13 +1201,63 @@ class _AssigneePicker extends StatelessWidget {
           FilterChip(
             selected: selectedIds.contains(member.userId),
             onSelected: enabled ? (_) => onToggle(member) : null,
+            selectedColor: AppColors.ink,
+            checkmarkColor: AppColors.background,
+            backgroundColor: AppColors.surface,
+            disabledColor: AppColors.hover,
+            side: BorderSide(
+              color: selectedIds.contains(member.userId)
+                  ? AppColors.ink
+                  : AppColors.line,
+            ),
             avatar: AppAvatar(
               name: _memberName(member),
               imageUrl: member.avatarUrl,
               radius: 11,
             ),
-            label: Text(_memberName(member)),
+            label: Text(
+              _memberName(member),
+              style: TextStyle(
+                color: selectedIds.contains(member.userId)
+                    ? AppColors.background
+                    : AppColors.ink,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
+      ],
+    );
+  }
+}
+
+
+class _TaskStatusPicker extends StatelessWidget {
+  const _TaskStatusPicker({required this.status, required this.onChanged});
+
+  final String status;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        NotionPill(
+          label: 'Todo',
+          selected: status == 'todo',
+          onTap: status == 'todo' ? null : () => onChanged('todo'),
+        ),
+        NotionPill(
+          label: 'Doing',
+          selected: status == 'doing',
+          onTap: status == 'doing' ? null : () => onChanged('doing'),
+        ),
+        NotionPill(
+          label: 'Done',
+          selected: status == 'done',
+          onTap: status == 'done' ? null : () => onChanged('done'),
+        ),
       ],
     );
   }
@@ -1173,18 +1267,21 @@ class _TaskTile extends StatelessWidget {
   const _TaskTile({
     required this.task,
     required this.members,
+    required this.currentUserId,
     required this.onOpen,
     required this.onStatus,
   });
 
   final WorkTask task;
   final List<WorkspaceMember> members;
+  final String? currentUserId;
   final VoidCallback onOpen;
   final ValueChanged<String> onStatus;
 
   @override
   Widget build(BuildContext context) {
     final isDone = task.status == 'done';
+    final canChangeStatus = task.canChangeStatusBy(currentUserId);
     final description = task.description?.trim();
 
     return NotionCard(
@@ -1195,16 +1292,21 @@ class _TaskTile extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              InkWell(
-                borderRadius: BorderRadius.circular(999),
-                onTap: () => _showStatusSheet(context),
-                child: Padding(
-                  padding: const EdgeInsets.all(2),
-                  child: Icon(
-                    isDone
-                        ? Icons.check_circle_rounded
-                        : Icons.radio_button_unchecked_rounded,
-                    color: isDone ? AppColors.success : AppColors.muted,
+              Tooltip(
+                message: canChangeStatus ? 'Đổi trạng thái' : task.statusLockReason(currentUserId),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: canChangeStatus ? () => _showStatusSheet(context) : null,
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Icon(
+                      isDone
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      color: isDone
+                          ? AppColors.success
+                          : (canChangeStatus ? AppColors.ink : AppColors.muted),
+                    ),
                   ),
                 ),
               ),
@@ -1221,14 +1323,15 @@ class _TaskTile extends StatelessWidget {
                   ),
                 ),
               ),
-              IconButton(
-                tooltip: 'Task actions',
-                onPressed: () => _showStatusSheet(context),
-                icon: const Icon(
-                  Icons.more_horiz_rounded,
-                  color: AppColors.muted,
+              if (canChangeStatus)
+                IconButton(
+                  tooltip: 'Task status',
+                  onPressed: () => _showStatusSheet(context),
+                  icon: const Icon(
+                    Icons.more_horiz_rounded,
+                    color: AppColors.muted,
+                  ),
                 ),
-              ),
             ],
           ),
           if (description?.isNotEmpty == true) ...[
@@ -1281,6 +1384,11 @@ class _TaskTile extends StatelessWidget {
   }
 
   Future<void> _showStatusSheet(BuildContext context) async {
+    if (!task.canChangeStatusBy(currentUserId)) {
+      AppSnackBar.warning(context, task.statusLockReason(currentUserId));
+      return;
+    }
+
     final next = await NotionBottomSheet.show<String>(
       context: context,
       title: 'Task status',
@@ -1291,16 +1399,22 @@ class _TaskTile extends StatelessWidget {
           NotionActionRow(
             icon: Icons.radio_button_unchecked_rounded,
             title: 'Todo',
+            subtitle: task.status == 'todo' ? 'Đang ở trạng thái này.' : null,
+            enabled: task.status != 'todo',
             onTap: () => Navigator.pop(context, 'todo'),
           ),
           NotionActionRow(
             icon: Icons.pending_actions_rounded,
             title: 'Doing',
+            subtitle: task.status == 'doing' ? 'Đang ở trạng thái này.' : null,
+            enabled: task.status != 'doing',
             onTap: () => Navigator.pop(context, 'doing'),
           ),
           NotionActionRow(
             icon: Icons.check_circle_rounded,
             title: 'Done',
+            subtitle: 'Hoàn thành là khóa, không đổi lại được.',
+            enabled: task.status != 'done',
             onTap: () => Navigator.pop(context, 'done'),
           ),
         ],
@@ -1318,7 +1432,15 @@ class _AssigneePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shown = userIds.take(3).toList();
+    final visibleUserIds = userIds
+        .where((id) => _memberById(members, id)?.isCurrentUser != true)
+        .toList();
+
+    if (visibleUserIds.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final shown = visibleUserIds.take(3).toList();
     final names = shown.map((id) => _memberName(_memberById(members, id))).toList();
 
     return Container(
@@ -1351,7 +1473,9 @@ class _AssigneePreview extends StatelessWidget {
           ),
           const SizedBox(width: 7),
           Text(
-            userIds.length > 3 ? '${userIds.length} assignees' : names.join(', '),
+            visibleUserIds.length > 3
+                ? '${visibleUserIds.length} assignees'
+                : names.join(', '),
             style: const TextStyle(
               color: AppColors.muted,
               fontSize: 12,
@@ -1462,21 +1586,23 @@ class _AiSuggestions extends StatelessWidget {
                 ],
               ),
             ),
-            IconButton(
+            AppIconButton(
               tooltip: 'AI settings',
+              tone: AppIconButtonTone.secondary,
               onPressed: onSettings,
-              icon: const Icon(Icons.tune_rounded),
+              icon: Icons.tune_rounded,
+              size: 40,
+              iconSize: 19,
             ),
-            IconButton.filledTonal(
+            const SizedBox(width: 8),
+            AppIconButton(
               tooltip: 'Refresh suggestions',
+              tone: AppIconButtonTone.primary,
+              isLoading: isGenerating,
               onPressed: isGenerating ? null : onRefresh,
-              icon: isGenerating
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.refresh_rounded),
+              icon: Icons.refresh_rounded,
+              size: 40,
+              iconSize: 19,
             ),
           ],
         ),

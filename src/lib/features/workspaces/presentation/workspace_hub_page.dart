@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app/app_scope.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../shared/widgets/app_feedback.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/notion_widgets.dart';
 import '../../pages/domain/page_item.dart';
@@ -253,9 +254,7 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
 
   void _showPageSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    AppSnackBar.show(context, message);
   }
 
   Future<void> _showCreateWorkspace(BuildContext context) async {
@@ -780,8 +779,8 @@ class _PageTreeTile extends StatelessWidget {
             page.isArchived
                 ? 'Trong Trash'
                 : page.parentPageId?.isNotEmpty == true
-                    ? 'Page con · Revision ${page.currentRevision}'
-                    : 'Revision ${page.currentRevision}',
+                    ? 'Page con'
+                    : 'Page',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: AppColors.muted),
