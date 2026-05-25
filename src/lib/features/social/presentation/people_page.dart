@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../app/app_scope.dart';
@@ -25,6 +27,7 @@ class PeoplePage extends StatefulWidget {
 class _PeoplePageState extends State<PeoplePage> {
   late final PeopleController _controller;
   final _search = TextEditingController();
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -38,6 +41,7 @@ class _PeoplePageState extends State<PeoplePage> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _search.dispose();
     _controller.dispose();
     super.dispose();
@@ -133,6 +137,22 @@ class _PeoplePageState extends State<PeoplePage> {
     }
   }
 
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(
+      const Duration(milliseconds: 380),
+      () => _controller.search(value),
+    );
+  }
+
+  void _clearSearch() {
+    _searchDebounce?.cancel();
+    _search.clear();
+    _controller.clearSearch();
+    setState(() {});
+  }
+
   Future<void> _confirmRemoveFriend(FriendItem friend) async {
     final confirmed = await NotionConfirmDialog.show(
       context: context,
@@ -150,11 +170,25 @@ class _PeoplePageState extends State<PeoplePage> {
     );
   }
 
+
+  bool _friendMatches(FriendItem friend, String keyword) {
+    final text = keyword.trim().toLowerCase();
+    if (text.isEmpty) return true;
+    return friend.fullName.toLowerCase().contains(text) ||
+        friend.userName.toLowerCase().contains(text);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
+        final visibleFriends = _controller.hasSearchQuery
+            ? _controller.friends
+                .where((friend) => _friendMatches(friend, _controller.activeKeyword))
+                .toList()
+            : _controller.friends;
+
         return RefreshIndicator(
           onRefresh: _controller.loadFriends,
           child: ListView(
@@ -189,16 +223,30 @@ class _PeoplePageState extends State<PeoplePage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                       )
-                    : IconButton(
-                        tooltip: 'Search',
-                        onPressed: () => _controller.search(_search.text),
-                        icon: const Icon(Icons.arrow_forward_rounded),
-                      ),
+                    : _search.text.trim().isNotEmpty
+                        ? IconButton(
+                            tooltip: 'Clear search',
+                            onPressed: _clearSearch,
+                            icon: const Icon(Icons.close_rounded),
+                          )
+                        : IconButton(
+                            tooltip: 'Search',
+                            onPressed: () => _controller.search(_search.text),
+                            icon: const Icon(Icons.arrow_forward_rounded),
+                          ),
+                onChanged: (value) {
+                  setState(() {});
+                  _onSearchChanged(value);
+                },
                 onSubmitted: _controller.search,
               ),
               if (_controller.error != null) ...[
                 const SizedBox(height: 12),
                 _InlineError(message: _controller.error!),
+              ],
+              if (_controller.searchHint != null) ...[
+                const SizedBox(height: 12),
+                _SearchHintCard(message: _controller.searchHint!),
               ],
               if (_controller.incomingRequests.isNotEmpty) ...[
                 const SizedBox(height: 18),
@@ -246,7 +294,8 @@ class _PeoplePageState extends State<PeoplePage> {
                       .toList(),
                 ),
               ],
-              if (_controller.results.isNotEmpty) ...[
+              if (_controller.hasSearchQuery &&
+                  _controller.results.isNotEmpty) ...[
                 const SizedBox(height: 18),
                 NotionSection(
                   title: 'Search results',
@@ -264,21 +313,32 @@ class _PeoplePageState extends State<PeoplePage> {
                             onChat: () => _openChat(
                               user.id,
                               displayName: user.fullName,
-                              canChat: _controller.effectiveStatus(user) == 'friends',
+                              canChat:
+                                  _controller.effectiveStatus(user) == 'friends',
                             ),
                           ),
                         ),
                       )
                       .toList(),
                 ),
+              ] else if (_controller.hasSearchQuery &&
+                  !_controller.isSearching &&
+                  _controller.canSearch &&
+                  _controller.error == null) ...[
+                const SizedBox(height: 18),
+                const EmptyState(
+                  icon: Icons.person_search_rounded,
+                  title: 'Không thấy user phù hợp',
+                  message: 'Thử nhập username hoặc tên đầy đủ, tối thiểu 2 ký tự.',
+                ),
               ],
               const SizedBox(height: 18),
               Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Friends',
-                      style: TextStyle(
+                      _controller.hasSearchQuery ? 'Bạn bè khớp tìm kiếm' : 'Friends',
+                      style: const TextStyle(
                         color: AppColors.ink,
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
@@ -293,14 +353,18 @@ class _PeoplePageState extends State<PeoplePage> {
                 ],
               ),
               const SizedBox(height: 10),
-              if (_controller.friends.isEmpty)
-                const EmptyState(
+              if (visibleFriends.isEmpty)
+                EmptyState(
                   icon: Icons.group_outlined,
-                  title: 'No friends yet',
-                  message: 'Search for someone and send a friend request.',
+                  title: _controller.hasSearchQuery
+                      ? 'Không thấy bạn bè khớp'
+                      : 'No friends yet',
+                  message: _controller.hasSearchQuery
+                      ? 'Friend list chưa có ai trùng từ khóa này.'
+                      : 'Search for someone and send a friend request.',
                 )
               else
-                ..._controller.friends.map(
+                ...visibleFriends.map(
                   (friend) => Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: NotionListTile(
@@ -368,6 +432,14 @@ class _UserTile extends StatelessWidget {
   final String effectiveStatus;
   final VoidCallback onAdd;
   final VoidCallback onChat;
+
+
+  bool _friendMatches(FriendItem friend, String keyword) {
+    final text = keyword.trim().toLowerCase();
+    if (text.isEmpty) return true;
+    return friend.fullName.toLowerCase().contains(text) ||
+        friend.userName.toLowerCase().contains(text);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -457,6 +529,14 @@ class _UserQuickAction extends StatelessWidget {
   final VoidCallback onAdd;
   final VoidCallback onChat;
 
+
+  bool _friendMatches(FriendItem friend, String keyword) {
+    final text = keyword.trim().toLowerCase();
+    if (text.isEmpty) return true;
+    return friend.fullName.toLowerCase().contains(text) ||
+        friend.userName.toLowerCase().contains(text);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (status == 'friends') {
@@ -501,6 +581,14 @@ class _FriendRequestTile extends StatelessWidget {
   final VoidCallback? onReject;
   final VoidCallback? onCancel;
 
+
+  bool _friendMatches(FriendItem friend, String keyword) {
+    final text = keyword.trim().toLowerCase();
+    if (text.isEmpty) return true;
+    return friend.fullName.toLowerCase().contains(text) ||
+        friend.userName.toLowerCase().contains(text);
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = request.otherUser;
@@ -544,6 +632,14 @@ class _StatusBadge extends StatelessWidget {
 
   final String label;
 
+
+  bool _friendMatches(FriendItem friend, String keyword) {
+    final text = keyword.trim().toLowerCase();
+    if (text.isEmpty) return true;
+    return friend.fullName.toLowerCase().contains(text) ||
+        friend.userName.toLowerCase().contains(text);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -566,10 +662,55 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
+class _SearchHintCard extends StatelessWidget {
+  const _SearchHintCard({required this.message});
+
+  final String message;
+
+
+  bool _friendMatches(FriendItem friend, String keyword) {
+    final text = keyword.trim().toLowerCase();
+    if (text.isEmpty) return true;
+    return friend.fullName.toLowerCase().contains(text) ||
+        friend.userName.toLowerCase().contains(text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotionCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          const Icon(Icons.tips_and_updates_outlined, color: AppColors.muted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: AppColors.muted,
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _InlineError extends StatelessWidget {
   const _InlineError({required this.message});
 
   final String message;
+
+
+  bool _friendMatches(FriendItem friend, String keyword) {
+    final text = keyword.trim().toLowerCase();
+    if (text.isEmpty) return true;
+    return friend.fullName.toLowerCase().contains(text) ||
+        friend.userName.toLowerCase().contains(text);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -590,3 +731,5 @@ class _InlineError extends StatelessWidget {
     );
   }
 }
+
+

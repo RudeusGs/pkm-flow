@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/realtime/realtime_event.dart';
 import '../../../core/realtime/realtime_service.dart';
+import '../../../core/utils/json_utils.dart';
 import '../../workspaces/domain/workspace.dart';
 import '../data/inbox_repository.dart';
 import '../domain/inbox_models.dart';
@@ -36,6 +39,7 @@ class InboxController extends ChangeNotifier {
       await Future.wait(
           [loadNotifications(silent: true), loadConversations(silent: true)]);
       _bindRealtime();
+      unawaited(_ensureRealtime());
     } catch (err) {
       error = err.toString();
     } finally {
@@ -58,6 +62,7 @@ class InboxController extends ChangeNotifier {
       notifications = results[0] as List<NotificationItem>;
       unreadNotifications = results[1] as int;
       _bindRealtime();
+      unawaited(_ensureRealtime());
     } catch (err) {
       error = err.toString();
     } finally {
@@ -125,6 +130,7 @@ class InboxController extends ChangeNotifier {
     try {
       conversations = await _repository.conversations();
       _bindRealtime();
+      unawaited(_ensureRealtime());
     } catch (err) {
       error = err.toString();
     } finally {
@@ -142,6 +148,18 @@ class InboxController extends ChangeNotifier {
     await _realtime.joinConversation(conversation.id);
     await _repository.markConversationRead(conversation.id);
     messages = await _repository.messages(conversation.id);
+    _markConversationReadLocally(conversation.id);
+    notifyListeners();
+  }
+
+  Future<void> closeConversation() async {
+    final conversation = selectedConversation;
+    if (conversation == null) return;
+
+    selectedConversation = null;
+    typingText = null;
+    messages = const [];
+    await _realtime.leaveConversation(conversation.id);
     notifyListeners();
   }
 
@@ -155,6 +173,7 @@ class InboxController extends ChangeNotifier {
     try {
       final sent = await _repository.sendText(conversation.id, text.trim());
       _upsertMessage(sent);
+      _upsertConversationPreview(sent, forceRead: true);
       await loadConversations(silent: true);
     } finally {
       isSendingMessage = false;
@@ -183,6 +202,7 @@ class InboxController extends ChangeNotifier {
         caption: caption,
       );
       _upsertMessage(sent);
+      _upsertConversationPreview(sent, forceRead: true);
       await loadConversations(silent: true);
     } finally {
       isSendingMessage = false;
@@ -199,6 +219,7 @@ class InboxController extends ChangeNotifier {
     if (selectedConversation?.id == conversation.id) {
       _upsertMessage(message);
     }
+    _upsertConversationPreview(message, forceRead: true);
     await loadConversations(silent: true);
   }
 
@@ -217,6 +238,7 @@ class InboxController extends ChangeNotifier {
 
   void _bindRealtime() {
     if (_unsubscribe.isNotEmpty) return;
+
     for (final event in [
       'NotificationCreated',
       'NotificationReadChanged',
@@ -225,21 +247,39 @@ class InboxController extends ChangeNotifier {
       _unsubscribe.add(_realtime.on(
           event, (_) => _debounced(() => loadNotifications(silent: true))));
     }
+
     for (final event in ['ConversationUpserted', 'ConversationRead']) {
       _unsubscribe.add(_realtime.on(
-          event, (_) => _debounced(() => loadConversations(silent: true))));
+        event,
+        (_) => _debounced(() => loadConversations(silent: true)),
+      ));
     }
+
     _unsubscribe.add(_realtime.on('MessageCreated', (payload) async {
+      final message = _messageFromRealtime(payload);
+      final conversationId = payload.conversationId ?? message?.conversationId;
       final selected = selectedConversation;
-      if (selected != null &&
-          (payload.conversationId == null ||
-              payload.conversationId == selected.id)) {
-        messages = await _repository.messages(selected.id);
-        await _repository.markConversationRead(selected.id);
-        notifyListeners();
+      final isSelected = selected != null &&
+          (conversationId == null || conversationId == selected.id);
+
+      if (message != null) {
+        _upsertConversationPreview(message, forceRead: isSelected);
       }
+
+      if (selected != null && isSelected) {
+        if (message != null) {
+          _upsertMessage(message);
+        } else {
+          messages = await _repository.messages(selected.id);
+          notifyListeners();
+        }
+        await _repository.markConversationRead(selected.id);
+        _markConversationReadLocally(selected.id);
+      }
+
       _debounced(() => loadConversations(silent: true));
     }));
+
     _unsubscribe.add(_realtime.on('ConversationTyping', (payload) {
       final selected = selectedConversation;
       if (selected == null || payload.conversationId != selected.id) return;
@@ -250,6 +290,24 @@ class InboxController extends ChangeNotifier {
         notifyListeners();
       });
     }));
+  }
+
+  MessageItem? _messageFromRealtime(RealtimeEvent event) {
+    final payload = event.payloadMap;
+    if (payload.isEmpty) return null;
+
+    final conversationId = asString(
+      payload['conversationId'],
+      event.conversationId ?? '',
+    );
+    final id = asString(payload['id']);
+    if (id.isEmpty || conversationId.isEmpty) return null;
+
+    try {
+      return MessageItem.fromJson({...payload, 'conversationId': conversationId});
+    } catch (_) {
+      return null;
+    }
   }
 
   void _upsertMessage(MessageItem message) {
@@ -265,6 +323,55 @@ class InboxController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _upsertConversationPreview(
+    MessageItem message, {
+    bool forceRead = false,
+  }) {
+    final index = conversations.indexWhere(
+      (item) => item.id == message.conversationId,
+    );
+    if (index < 0) return;
+
+    final current = conversations[index];
+    final shouldCountUnread = !forceRead &&
+        !message.isMine &&
+        selectedConversation?.id != message.conversationId;
+
+    final updated = current.copyWith(
+      lastMessagePreview: _previewForMessage(message),
+      lastMessageAtUtc:
+          message.createdDate ?? DateTime.now().toUtc().toIso8601String(),
+      unreadCount: shouldCountUnread
+          ? current.unreadCount + 1
+          : (forceRead ? 0 : current.unreadCount),
+    );
+
+    final next = [
+      updated,
+      ...conversations.where((item) => item.id != updated.id),
+    ];
+    conversations = next;
+    notifyListeners();
+  }
+
+  void _markConversationReadLocally(String conversationId) {
+    conversations = conversations
+        .map((item) => item.id == conversationId
+            ? item.copyWith(unreadCount: 0)
+            : item)
+        .toList();
+    notifyListeners();
+  }
+
+  String _previewForMessage(MessageItem message) {
+    final type = message.type.toLowerCase();
+    final body = message.body.trim();
+
+    if (type == 'workspaceshare') return 'Đã chia sẻ một workspace';
+    if (type == 'image') return body.isEmpty ? 'Đã gửi một ảnh' : body;
+    return body.isEmpty ? 'Tin nhắn mới' : body;
+  }
+
   static int _compareMessagesOldestFirst(MessageItem a, MessageItem b) {
     final left = DateTime.tryParse(a.createdDate ?? '') ??
         DateTime.fromMillisecondsSinceEpoch(0);
@@ -276,7 +383,15 @@ class InboxController extends ChangeNotifier {
 
   void _debounced(Future<void> Function() action) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () => action());
+    _debounce = Timer(const Duration(milliseconds: 250), () => action());
+  }
+
+  Future<void> _ensureRealtime() async {
+    try {
+      await _realtime.start(userInitiated: true);
+    } catch (_) {
+      // RealtimeService đã giữ trạng thái lỗi và tự retry. UI list vẫn dùng API fallback.
+    }
   }
 
   @override

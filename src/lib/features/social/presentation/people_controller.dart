@@ -27,6 +27,11 @@ class PeopleController extends ChangeNotifier {
   bool isSearching = false;
   bool isBusy = false;
   String? error;
+  String activeKeyword = '';
+  String? searchHint;
+
+  bool get hasSearchQuery => activeKeyword.trim().isNotEmpty;
+  bool get canSearch => activeKeyword.trim().length >= 2;
 
   bool isFriendUser(String userId) {
     final id = userId.trim().toLowerCase();
@@ -61,20 +66,42 @@ class PeopleController extends ChangeNotifier {
     }
   }
 
+  void clearSearch() {
+    activeKeyword = '';
+    searchHint = null;
+    results = const [];
+    error = null;
+    isSearching = false;
+    notifyListeners();
+  }
+
   Future<void> search(String keyword) async {
     final text = keyword.trim();
+    activeKeyword = text;
+
     if (text.isEmpty) {
+      clearSearch();
+      return;
+    }
+
+    if (text.length < 2) {
       results = const [];
+      searchHint = 'Nhập ít nhất 2 ký tự để tìm người dùng.';
+      error = null;
+      isSearching = false;
       notifyListeners();
       return;
     }
 
     isSearching = true;
+    searchHint = null;
     error = null;
     notifyListeners();
 
     try {
       final found = await _repository.searchUsers(text);
+      if (activeKeyword != text) return;
+
       results = found
           .map(
             (user) => isFriendUser(user.id)
@@ -82,21 +109,28 @@ class PeopleController extends ChangeNotifier {
                 : user,
           )
           .toList();
+      searchHint = results.isEmpty
+          ? 'Không tìm thấy ai khớp "$text". Thử username hoặc tên đầy đủ nha.'
+          : null;
     } catch (err) {
+      if (activeKeyword != text) return;
+      results = const [];
       error = err.toString();
     } finally {
-      isSearching = false;
-      notifyListeners();
+      if (activeKeyword == text) {
+        isSearching = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> sendRequest(UserSearchResult user) async {
-    if (isBusy || !user.canSendRequest) return;
+    if (isBusy || effectiveStatus(user) != 'none') return;
 
     await _run(() async {
       await _repository.sendFriendRequest(user.id);
       await _reloadSocialData();
-      await search(user.userName);
+      await search(activeKeyword.isNotEmpty ? activeKeyword : user.userName);
     });
   }
 

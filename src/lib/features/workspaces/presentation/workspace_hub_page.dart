@@ -141,35 +141,22 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
                         ),
                         const SizedBox(height: 12),
                       ],
-                      Row(
-                        children: [
-                          if (!_pages.isTrashView) ...[
-                            Expanded(
-                              child: NotionButton(
-                                label: 'Tạo page',
-                                icon: Icons.note_add_outlined,
-                                expanded: true,
-                                onPressed: _pages.isBusy
-                                    ? null
-                                    : () => _showCreatePage(context),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                          ],
-                          Expanded(
-                            child: NotionButton(
-                              label: _pages.isTrashView ? 'Về pages' : 'Trash',
-                              icon: _pages.isTrashView
-                                  ? Icons.description_outlined
-                                  : Icons.delete_outline_rounded,
-                              secondary: !_pages.isTrashView,
-                              expanded: true,
-                              onPressed:
-                                  _pages.isBusy ? null : _toggleTrashView,
-                            ),
-                          ),
-                        ],
-                      ),
+                      if (!_pages.isTrashView)
+                        NotionButton(
+                          label: 'Tạo page',
+                          icon: Icons.note_add_outlined,
+                          expanded: true,
+                          onPressed: _pages.isBusy
+                              ? null
+                              : () => _showCreatePage(context),
+                        )
+                      else
+                        NotionButton(
+                          label: 'Về pages',
+                          icon: Icons.description_outlined,
+                          expanded: true,
+                          onPressed: _pages.isBusy ? null : _toggleTrashView,
+                        ),
                       if (_pages.error != null) ...[
                         const SizedBox(height: 12),
                         _PageErrorBanner(
@@ -587,6 +574,7 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
           ? 'Đã bỏ "${page.title}" khỏi yêu thích.'
           : _pages.error ?? 'Không cập nhật được yêu thích.');
     } else if (action == 'restore') {
+      final wasTrashView = _pages.isTrashView;
       final restored = await _pages.restorePage(page);
       if (!mounted) return;
       if (restored == null) {
@@ -594,6 +582,11 @@ class _WorkspaceHubPageState extends State<WorkspaceHubPage> {
         return;
       }
       _showPageSnack('Đã khôi phục "${page.title}".');
+
+      if (wasTrashView) {
+        _search.clear();
+        _loadPages(keyword: '');
+      }
     } else if (action == 'delete') {
       if (!mounted) return;
       final confirmed = await NotionConfirmDialog.show(
@@ -890,3 +883,5 @@ class _NoWorkspaceState extends StatelessWidget {
     );
   }
 }
+
+

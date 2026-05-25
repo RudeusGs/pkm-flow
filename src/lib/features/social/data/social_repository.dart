@@ -9,9 +9,12 @@ class SocialRepository {
   final ApiClient _apiClient;
 
   Future<List<UserSearchResult>> searchUsers(String keyword) {
+    final text = keyword.trim();
+    if (text.length < 2) return Future.value(const <UserSearchResult>[]);
+
     return _apiClient.get<List<UserSearchResult>>(
       'social/users/search',
-      query: {'keyword': keyword, 'pageNumber': 1, 'pageSize': 30},
+      query: {'keyword': text, 'pageNumber': 1, 'pageSize': 30},
       parser: (json) {
         if (json is List) {
           return json
@@ -102,3 +105,5 @@ class SocialRepository {
     );
   }
 }
+
+

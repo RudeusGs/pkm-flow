@@ -72,6 +72,28 @@ class Conversation {
       lastMessageAtUtc: json['lastMessageAtUtc']?.toString(),
     );
   }
+
+  Conversation copyWith({
+    String? id,
+    String? otherUserId,
+    String? otherUserName,
+    String? otherFullName,
+    String? otherAvatarUrl,
+    String? lastMessagePreview,
+    int? unreadCount,
+    String? lastMessageAtUtc,
+  }) {
+    return Conversation(
+      id: id ?? this.id,
+      otherUserId: otherUserId ?? this.otherUserId,
+      otherUserName: otherUserName ?? this.otherUserName,
+      otherFullName: otherFullName ?? this.otherFullName,
+      otherAvatarUrl: otherAvatarUrl ?? this.otherAvatarUrl,
+      lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
+      unreadCount: unreadCount ?? this.unreadCount,
+      lastMessageAtUtc: lastMessageAtUtc ?? this.lastMessageAtUtc,
+    );
+  }
 }
 
 class WorkspaceSharePayload {

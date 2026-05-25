@@ -5,6 +5,8 @@ import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/app_avatar.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/notion_widgets.dart';
+import '../../activity_logs/data/activity_log_repository.dart';
+import '../../activity_logs/presentation/activity_log_page.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../auth/presentation/profile_page.dart';
 import '../../inbox/domain/inbox_models.dart';
@@ -17,6 +19,7 @@ import '../../tasks/presentation/tasks_page.dart';
 import '../../workspaces/domain/workspace.dart';
 import '../../workspaces/presentation/workspace_controller.dart';
 import '../../workspaces/presentation/workspace_hub_page.dart';
+import '../../workspaces/presentation/workspace_trash_page.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({
@@ -178,8 +181,10 @@ class _HomeShellState extends State<HomeShell> {
             title: 'Share workspace via message',
             subtitle: workspace == null
                 ? 'Create a workspace first.'
-                : 'Send a workspace card to a chat.',
-            enabled: workspace != null,
+                : workspace.canManageMembersEffective
+                    ? 'Send a workspace card to a chat.'
+                    : 'Owner/Manager permission is required.',
+            enabled: workspace?.canManageMembersEffective == true,
             onTap: () {
               Navigator.pop(context);
               _showShareWorkspaceMessage(context, workspace!);
@@ -190,8 +195,10 @@ class _HomeShellState extends State<HomeShell> {
             title: 'Invite member by email/Gmail',
             subtitle: workspace == null
                 ? 'Create a workspace first.'
-                : 'Invite someone with a role.',
-            enabled: workspace != null,
+                : workspace.canManageMembersEffective
+                    ? 'Invite someone with a role.'
+                    : 'Only Owner/Manager can invite members.',
+            enabled: workspace?.canManageMembersEffective == true,
             onTap: () {
               Navigator.pop(context);
               _showInviteEmail(context);
@@ -216,6 +223,30 @@ class _HomeShellState extends State<HomeShell> {
             },
           ),
           NotionActionRow(
+            icon: Icons.history_rounded,
+            title: 'Activity log',
+            subtitle: workspace == null
+                ? 'Create a workspace first.'
+                : 'See who changed what in this workspace.',
+            enabled: workspace != null,
+            onTap: () {
+              Navigator.pop(context);
+              if (workspace != null) _openActivityLog(context, workspace);
+            },
+          ),
+          NotionActionRow(
+            icon: Icons.delete_outline_rounded,
+            title: 'Trash',
+            subtitle: workspace == null
+                ? 'Create a workspace first.'
+                : 'Restore pages moved to Trash.',
+            enabled: workspace != null,
+            onTap: () {
+              Navigator.pop(context);
+              if (workspace != null) _openWorkspaceTrash(context, workspace);
+            },
+          ),
+          NotionActionRow(
             icon: Icons.person_outline_rounded,
             title: 'Profile',
             onTap: () {
@@ -237,6 +268,40 @@ class _HomeShellState extends State<HomeShell> {
         ],
       ),
     );
+  }
+
+  Future<void> _openActivityLog(
+    BuildContext context,
+    Workspace workspace,
+  ) {
+    final deps = AppScope.read(context);
+    final repository = ActivityLogRepository(apiClient: deps.apiClient);
+
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ActivityLogPage(
+          workspace: workspace,
+          repository: repository,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openWorkspaceTrash(
+    BuildContext context,
+    Workspace workspace,
+  ) async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => WorkspaceTrashPage(workspace: workspace),
+      ),
+    );
+
+    if (!mounted || changed != true) return;
+
+    // Ép WorkspaceHubPage reload lại page list sau khi restore trong Trash.
+    await _workspaceController.openWorkspace(workspace);
+    if (mounted) setState(() => _tab = 0);
   }
 
   Future<void> _showInviteEmail(BuildContext context) async {
@@ -495,77 +560,67 @@ class _HomeShellState extends State<HomeShell> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (context) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: .65,
-        minChildSize: .35,
-        maxChildSize: .9,
-        builder: (context, scrollController) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-              child: BottomSheetHeader(
-                title: 'Members',
-                subtitle:
-                    '${_workspaceController.members.length} people in ${workspace.name}',
+      builder: (context) => AnimatedBuilder(
+        animation: _workspaceController,
+        builder: (context, _) => DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: .72,
+          minChildSize: .42,
+          maxChildSize: .92,
+          builder: (context, scrollController) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                child: BottomSheetHeader(
+                  title: 'Members',
+                  subtitle: workspace.canManageMembersEffective
+                      ? 'Bấm nút 3 chấm cạnh member để đổi quyền hoặc xóa khỏi workspace.'
+                      : 'Bạn đang không có quyền quản lý member trong workspace này.',
+                ),
               ),
-            ),
-            Expanded(
-              child: _workspaceController.members.isEmpty
-                  ? const EmptyState(
-                      icon: Icons.groups_2_outlined,
-                      title: 'No members loaded',
-                      message: 'Invite someone when you are ready.',
-                    )
-                  : ListView.separated(
-                      controller: scrollController,
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-                      itemCount: _workspaceController.members.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final member = _workspaceController.members[index];
-                        final canManageMember = workspace.canManageMembers &&
-                            !member.isOwner &&
-                            !member.isCurrentUser;
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: _MemberPermissionNotice(
+                  canManage: workspace.canManageMembersEffective,
+                  count: _workspaceController.members.length,
+                  workspaceName: workspace.name,
+                ),
+              ),
+              Expanded(
+                child: _workspaceController.members.isEmpty
+                    ? const EmptyState(
+                        icon: Icons.groups_2_outlined,
+                        title: 'No members loaded',
+                        message: 'Invite someone when you are ready.',
+                      )
+                    : ListView.separated(
+                        controller: scrollController,
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+                        itemCount: _workspaceController.members.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          final member = _workspaceController.members[index];
+                          final canManageMember = workspace.canManageMembersEffective &&
+                              !member.isOwner &&
+                              !member.isCurrentUser;
 
-                        return NotionListTile(
-                          onTap: canManageMember
-                              ? () => _showMemberActions(context, member)
-                              : null,
-                          leading: AppAvatar(
-                            name: member.fullName,
-                            imageUrl: member.avatarUrl,
-                            radius: 22,
-                          ),
-                          title: member.fullName,
-                          subtitle: [
-                            if (member.userName.isNotEmpty)
-                              '@${member.userName}',
-                            if (member.email.isNotEmpty) member.email,
-                          ].join(' · '),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _RoleChip(
-                                label: member.isOwner
-                                    ? 'Owner'
-                                    : _roleLabel(member.role),
-                              ),
-                              if (canManageMember) ...[
-                                const SizedBox(width: 6),
-                                const Icon(
-                                  Icons.more_horiz_rounded,
-                                  color: AppColors.muted,
-                                ),
-                              ],
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
+                          return _MemberTile(
+                            member: member,
+                            canManage: canManageMember,
+                            roleLabel: member.isOwner
+                                ? 'Owner'
+                                : _roleLabel(member.role),
+                            roleIcon: _roleIcon(member.role),
+                            onTap: canManageMember
+                                ? () => _showMemberActions(context, member)
+                                : null,
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -575,24 +630,29 @@ class _HomeShellState extends State<HomeShell> {
     BuildContext context,
     WorkspaceMember member,
   ) async {
+    final currentRole = member.role.toLowerCase();
     final action = await NotionBottomSheet.show<String>(
       context: context,
       title: member.fullName,
-      subtitle: member.email.isEmpty ? 'Member actions' : member.email,
+      subtitle: member.email.isEmpty
+          ? 'Đổi quyền member trong workspace'
+          : '${member.email} · quyền hiện tại: ${_roleLabel(member.role)}',
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          const _MemberActionHint(),
+          const SizedBox(height: 10),
           for (final role in const ['viewer', 'member', 'manager'])
             NotionActionRow(
               icon: _roleIcon(role),
-              title: _roleLabel(role),
-              subtitle: member.role.toLowerCase() == role
-                  ? 'Current role'
-                  : 'Change role to ${_roleLabel(role).toLowerCase()}',
-              enabled: member.role.toLowerCase() != role,
-              trailing: member.role.toLowerCase() == role
-                  ? const Icon(Icons.check_rounded, color: AppColors.ink)
-                  : null,
+              title: 'Đổi thành ${_roleLabel(role)}',
+              subtitle: currentRole == role
+                  ? 'Đây là quyền hiện tại của member này.'
+                  : _roleDescription(role),
+              enabled: currentRole != role && !_workspaceController.isBusy,
+              trailing: currentRole == role
+                  ? const Icon(Icons.check_circle_rounded, color: AppColors.ink)
+                  : const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
               onTap: () => Navigator.pop(context, 'role:$role'),
             ),
           const Divider(height: 18),
@@ -601,6 +661,7 @@ class _HomeShellState extends State<HomeShell> {
             title: 'Remove from workspace',
             subtitle: 'Kick this member out of the workspace.',
             danger: true,
+            enabled: !_workspaceController.isBusy,
             onTap: () => Navigator.pop(context, 'remove'),
           ),
         ],
@@ -611,13 +672,21 @@ class _HomeShellState extends State<HomeShell> {
 
     if (action.startsWith('role:')) {
       final role = action.substring('role:'.length);
-      await _workspaceController.changeRole(member, role);
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content:
-                Text('Changed ${member.fullName} to ${_roleLabel(role)}.')),
-      );
+      try {
+        await _workspaceController.changeRole(member, role);
+        await _workspaceController.loadMembers(silent: true);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã đổi ${member.fullName} thành ${_roleLabel(role)}.'),
+          ),
+        );
+      } catch (err) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không đổi quyền được: $err')),
+        );
+      }
       return;
     }
 
@@ -632,11 +701,19 @@ class _HomeShellState extends State<HomeShell> {
 
       if (!confirmed) return;
 
-      await _workspaceController.removeMember(member);
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Removed ${member.fullName}.')),
-      );
+      try {
+        await _workspaceController.removeMember(member);
+        await _workspaceController.loadMembers(silent: true);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Removed ${member.fullName}.')),
+        );
+      } catch (err) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không xóa member được: $err')),
+        );
+      }
     }
   }
 
@@ -653,6 +730,13 @@ class _HomeShellState extends State<HomeShell> {
         'member' => Icons.edit_note_rounded,
         'viewer' => Icons.visibility_outlined,
         _ => Icons.verified_user,
+      };
+
+  String _roleDescription(String role) => switch (role.toLowerCase()) {
+        'manager' => 'Có thể quản lý member và cấu hình workspace.',
+        'member' => 'Có thể tạo/sửa nội dung trong workspace.',
+        'viewer' => 'Chỉ xem nội dung, không chỉnh sửa.',
+        _ => 'Cập nhật quyền truy cập cho member này.',
       };
 
   Future<void> _showWorkspaceSettings(BuildContext context) async {
@@ -707,20 +791,26 @@ class _HomeShellState extends State<HomeShell> {
               ),
               const SizedBox(height: 18),
               NotionButton(
-                label: 'Save changes',
+                label: workspace.canManageSettingsEffective
+                    ? 'Save changes'
+                    : 'Only Owner/Manager can edit',
                 icon: Icons.done_rounded,
                 expanded: true,
-                onPressed: () => Navigator.pop(context, 'save'),
+                onPressed: workspace.canManageSettingsEffective
+                    ? () => Navigator.pop(context, 'save')
+                    : null,
               ),
-              const SizedBox(height: 10),
-              NotionButton(
-                label: 'Leave workspace',
-                icon: Icons.exit_to_app_rounded,
-                danger: true,
-                expanded: true,
-                onPressed: () => Navigator.pop(context, 'leave'),
-              ),
-              if (workspace.canManageMembers) ...[
+              if (!workspace.canDeleteWorkspace) ...[
+                const SizedBox(height: 10),
+                NotionButton(
+                  label: 'Leave workspace',
+                  icon: Icons.exit_to_app_rounded,
+                  danger: true,
+                  expanded: true,
+                  onPressed: () => Navigator.pop(context, 'leave'),
+                ),
+              ],
+              if (workspace.canDeleteWorkspace) ...[
                 const SizedBox(height: 10),
                 NotionButton(
                   label: 'Delete workspace',
@@ -782,6 +872,187 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
+class _MemberPermissionNotice extends StatelessWidget {
+  const _MemberPermissionNotice({
+    required this.canManage,
+    required this.count,
+    required this.workspaceName,
+  });
+
+  final bool canManage;
+  final int count;
+  final String workspaceName;
+
+  @override
+  Widget build(BuildContext context) {
+    return NotionCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: AppColors.hover,
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Icon(
+              canManage
+                  ? Icons.admin_panel_settings_outlined
+                  : Icons.lock_outline_rounded,
+              color: AppColors.ink,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$count members · $workspaceName',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.ink,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  canManage
+                      ? 'Quyền đổi role đang bật. Nút 3 chấm ở từng dòng là chỗ phân lại quyền.'
+                      : 'Chỉ Owner/Manager mới được đổi quyền member.',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.muted, height: 1.35),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MemberTile extends StatelessWidget {
+  const _MemberTile({
+    required this.member,
+    required this.canManage,
+    required this.roleLabel,
+    required this.roleIcon,
+    this.onTap,
+  });
+
+  final WorkspaceMember member;
+  final bool canManage;
+  final String roleLabel;
+  final IconData roleIcon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitleParts = [
+      if (member.userName.isNotEmpty) '@${member.userName}',
+      if (member.email.isNotEmpty) member.email,
+    ];
+
+    return NotionCard(
+      padding: EdgeInsets.zero,
+      onTap: onTap,
+      child: ListTile(
+        minVerticalPadding: 10,
+        contentPadding: const EdgeInsets.only(left: 14, right: 4, top: 4, bottom: 4),
+        leading: AppAvatar(
+          name: member.fullName,
+          imageUrl: member.avatarUrl,
+          radius: 22,
+        ),
+        title: Text(
+          member.fullName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: AppColors.ink,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        subtitle: Text(
+          subtitleParts.join(' · '),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: AppColors.muted, height: 1.35),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _RoleChip(label: roleLabel, icon: roleIcon),
+            const SizedBox(width: 4),
+            if (canManage)
+              IconButton(
+                tooltip: 'Đổi quyền member',
+                onPressed: onTap,
+                icon: const Icon(Icons.more_horiz_rounded, color: AppColors.muted),
+              )
+            else
+              Icon(
+                member.isOwner
+                    ? Icons.workspace_premium_rounded
+                    : member.isCurrentUser
+                        ? Icons.person_pin_circle_outlined
+                        : Icons.lock_outline_rounded,
+                color: AppColors.subtle,
+                size: 20,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MemberActionHint extends StatelessWidget {
+  const _MemberActionHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return NotionCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.hover,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: const Icon(
+              Icons.admin_panel_settings_outlined,
+              color: AppColors.ink,
+              size: 19,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Chọn role mới bên dưới. Owner và chính bạn sẽ không hiện thao tác đổi quyền để tránh tự bóp quyền.',
+              style: TextStyle(
+                color: AppColors.muted,
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _WorkspaceMark extends StatelessWidget {
   const _WorkspaceMark({required this.name});
 
@@ -816,9 +1087,10 @@ class _WorkspaceMark extends StatelessWidget {
 }
 
 class _RoleChip extends StatelessWidget {
-  const _RoleChip({required this.label});
+  const _RoleChip({required this.label, this.icon});
 
   final String label;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -830,13 +1102,22 @@ class _RoleChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: AppColors.line),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: AppColors.muted,
-          fontSize: 12,
-          fontWeight: FontWeight.w900,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 14, color: AppColors.muted),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
       ),
     );
   }

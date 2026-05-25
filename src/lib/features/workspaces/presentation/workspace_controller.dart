@@ -200,10 +200,51 @@ class WorkspaceController extends ChangeNotifier {
   }) async {
     try {
       members = await _repository.members(workspaceId);
+      _syncSelectedFromCurrentMember();
       if (!silent) notifyListeners();
     } finally {
       _membersLoadFuture = null;
     }
+  }
+
+  void _syncSelectedFromCurrentMember() {
+    final workspace = selected;
+    if (workspace == null) return;
+
+    WorkspaceMember? currentMember;
+    for (final member in members) {
+      if (member.isCurrentUser) {
+        currentMember = member;
+        break;
+      }
+    }
+
+    if (currentMember == null && workspace.isOwner) {
+      for (final member in members) {
+        if (member.isOwner) {
+          currentMember = member;
+          break;
+        }
+      }
+    }
+
+    if (currentMember == null) return;
+
+    final role =
+        currentMember.isOwner ? 'owner' : normalizeWorkspaceRole(currentMember.role);
+    if (role.isEmpty) return;
+
+    final updated = workspace.copyWith(
+      currentUserRole: role,
+      canWrite: role == 'owner' || role == 'manager' || role == 'member',
+      canManageMembers: role == 'owner' || role == 'manager',
+      canDeleteWorkspace: role == 'owner',
+    );
+
+    selected = updated;
+    workspaces = workspaces
+        .map((item) => item.id == updated.id ? updated : item)
+        .toList();
   }
 
   Future<void> inviteByEmail({

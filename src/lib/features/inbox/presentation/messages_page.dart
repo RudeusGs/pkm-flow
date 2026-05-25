@@ -45,14 +45,19 @@ class _MessagesPageState extends State<MessagesPage> {
     await _controller.openConversation(conversation);
     if (!mounted) return;
 
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ChatPage(
-          controller: _controller,
-          onWorkspaceOpened: widget.onWorkspaceOpened,
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ChatPage(
+            controller: _controller,
+            onWorkspaceOpened: widget.onWorkspaceOpened,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      await _controller.closeConversation();
+      await _controller.loadConversations(silent: true);
+    }
   }
 
   @override
